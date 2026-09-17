@@ -16,6 +16,14 @@ function doctorRow(d) {
 }
 
 export function renderDoctors({ rows, ctx }) {
+  const owner = ctx.people.find(p => p.user_id === ctx.owner);
+  // A viewer can have Medicines access to someone (so the owner switcher offers them) without
+  // Care team access -- an empty list here used to always say "No doctors added", which reads as
+  // "this person has none" when the real reason is "you can't see them" (M1).
+  const noAccess = owner && !owner.care_team;
+  const empty = noAccess
+    ? `<p class="note">${esc(owner.display_name)} hasn't shared their care team with you.</p>`
+    : `<p class="note">No doctors added for this person yet.</p>`;
   return `<div class="top"><div><span class="title-sm">${esc(personName(ctx, ctx.owner))}'s care team</span><h1 class="big">Doctors &amp; HN</h1></div>${ownerSwitch(ctx)}</div>
-    ${rows.length ? rows.map(doctorRow).join("") : `<p class="note">No doctors added for this person yet.</p>`}`;
+    ${rows.length ? rows.map(doctorRow).join("") : empty}`;
 }

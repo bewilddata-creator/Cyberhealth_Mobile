@@ -8,7 +8,7 @@ import { renderDoctors } from "../js/views/doctors.js";
 import { renderEmergency, renderEmergencyEdit } from "../js/views/emergency.js";
 import { renderMore } from "../js/views/more.js";
 
-const ctx = { me: { user_id: "U01", display_name: "Dad" }, people: [{ user_id: "U01", display_name: "Dad", medicines: "Edit" }], owner: "U01" };
+const ctx = { me: { user_id: "U01", display_name: "Dad" }, people: [{ user_id: "U01", display_name: "Dad", medicines: "Edit", care_team: "Edit" }], owner: "U01" };
 
 test("renderMeds escapes a malicious medicine name", () => {
   const model = {
@@ -56,6 +56,25 @@ test("renderDoctors escapes a malicious doctor name", () => {
   assert.ok(html.includes("&lt;script&gt;x"));
 });
 
+test("renderDoctors: no Care team access to the owner shows a share-needed note, not the generic empty note (M1)", () => {
+  const noAccessCtx = {
+    me: { user_id: "U03", display_name: "Top" },
+    people: [
+      { user_id: "U02", display_name: "Pim", medicines: "View", care_team: "" },
+      { user_id: "U03", display_name: "Top", medicines: "Edit", care_team: "Edit" },
+    ],
+    owner: "U02",
+  };
+  const html = renderDoctors({ rows: [], ctx: noAccessCtx });
+  assert.ok(html.includes("Pim") && html.toLowerCase().includes("shared their care team"), html);
+  assert.ok(!html.includes("No doctors added"));
+});
+
+test("renderDoctors: has Care team access but genuinely no doctors yet shows the generic empty note", () => {
+  const html = renderDoctors({ rows: [], ctx });
+  assert.ok(html.includes("No doctors added"));
+});
+
 const publicModel = {
   user_id: "U01", display_name: "Somsak", full_name: "Somsak", date_of_birth: "1953-04-12", blood_type: "B+",
   allergies: [], conditions: [], current_medicines: ["Amlodipine 5 mg"], age: 73, notes: "",
@@ -99,8 +118,8 @@ test("renderEmergencyEdit escapes field values and only posts whitelisted fields
   assert.ok(html.includes('data-form="saveEmergency"'));
 });
 
-test("renderMore lists Sheet problems and coming-soon rows", () => {
-  const html = renderMore({ me: { display_name: "Dad" }, warnings: ["Prescriptions row RX99: missing user_id"] });
+test("renderMore lists Sheet problems (as { user_id, message } objects) and coming-soon rows", () => {
+  const html = renderMore({ me: { display_name: "Dad" }, warnings: [{ user_id: "U01", message: "Prescriptions row RX99: missing user_id" }] });
   assert.ok(html.includes("missing user_id"));
   assert.ok(html.includes("Coming soon"));
   assert.ok(html.includes("data-logout"));
