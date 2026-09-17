@@ -221,10 +221,8 @@ test("full doPost round trip: listUsers, setPassword, login, bootstrap, tick", (
   assert.equal(boot.data.me.display_name, "Top");
   assert.ok(boot.data.prescriptions.some(p => p.id === "RX07"), JSON.stringify(boot.data.prescriptions));
 
-  const tick = call({ action: "tick", token, prescriptionId: "RX07", date: boot.data.today, timeOfDay: "Morning" });
+  const tick = call({ action: "tick", token, prescriptionId: "RX07", date: boot.data.today, timeOfDay: "Morning", doseId: "DS07", amount: 1 });
   assert.equal(tick.ok, true, JSON.stringify(tick));
   assert.equal(tick.data.prescription_id, "RX07");
   assert.equal(tick.data.status, "Taken");
-
-  console.log("doPost round trip:", JSON.stringify({ listed, setPw, login, boot: { ok: boot.ok, me: boot.data.me }, tick }, null, 2));
 });

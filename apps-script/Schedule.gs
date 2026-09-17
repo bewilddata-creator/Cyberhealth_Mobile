@@ -10,6 +10,9 @@
 const TIMES_OF_DAY = ["Morning", "Noon", "Evening", "Bedtime"];
 const FREQ = { DAILY: "Daily", EVERY_N: "Every N days", WEEKDAYS: "Weekdays", AS_NEEDED: "As needed" };
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+// How many days of DoseLog history bootstrap sends (today and the 59 days before it). Shared so
+// the client can tell a day outside that window from a day that was simply never taken.
+const DOSE_LOG_WINDOW_DAYS = 60;
 
 const WEEKDAY_BY_JS_INDEX = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const BKK_OFFSET_MS = 7 * 3600 * 1000;
@@ -45,10 +48,11 @@ function bangkokTimeOfDay(nowMs) { return timeOfDayAtHour(bangkokHour(nowMs)); }
 
 const MEAL_TIMINGS = ["Before meal", "After meal", "With meal", "Any time"];
 
-function parseWeekdayList(value) {
-  return String(value == null ? "" : value).split(/[\s,]+/).filter(Boolean)
-    .map(w => w.slice(0, 1).toUpperCase() + w.slice(1, 3).toLowerCase())
-    .filter(w => WEEKDAYS.includes(w));
+function normalizeWeekdayToken(w) {
+  return w.slice(0, 1).toUpperCase() + w.slice(1, 3).toLowerCase();
+}
+function splitWeekdayTokens(value) {
+  return String(value == null ? "" : value).split(/[\s,]+/).filter(Boolean);
 }
 
 // ---- normalizers ----
@@ -81,8 +85,16 @@ function normalizePrescription(row) {
 
   let days = [];
   if (freq === FREQ.WEEKDAYS) {
-    days = parseWeekdayList(row.weekdays);
-    if (days.length === 0) return fail("weekdays needs day names like Mon,Wed,Fri");
+    const tokens = splitWeekdayTokens(row.weekdays);
+    if (tokens.length === 0) return fail("weekdays needs day names like Mon,Wed,Fri");
+    // A hand-typed weekday list is rejected outright on the first bad token (naming it) rather
+    // than silently dropping it -- a typo like "Wendesday" used to mean "never due on Wednesday"
+    // with no warning at all.
+    for (const t of tokens) {
+      const norm = normalizeWeekdayToken(t);
+      if (!WEEKDAYS.includes(norm)) return fail(`weekdays has an unknown day "${t}"`);
+      if (!days.includes(norm)) days.push(norm);
+    }
   }
 
   return {
@@ -126,6 +138,28 @@ function isDue(prescription, date) {
 }
 
 function doseKey(date, timeOfDay, prescriptionId) { return `${date}|${timeOfDay}|${prescriptionId}`; }
+
+// A hand-edited Sheet can end up with two Active Prescriptions rows for the same person and
+// medicine (a typo'd second entry rather than editing the first). Rather than showing the pill
+// twice, keep only the first by input order and let the caller warn about the rest; Stopped rows
+// are left alone since a person can genuinely have stopped the same medicine more than once.
+function dedupeActivePrescriptions(prescriptions) {
+  const seen = new Set();
+  return prescriptions.filter(p => {
+    if (p.status !== "Active") return true;
+    const combo = `${p.userId}|${p.medicineId}`;
+    if (seen.has(combo)) return false;
+    seen.add(combo);
+    return true;
+  });
+}
+
+// Whether Today, having been loaded for loadedToday, should jump to actualToday: only when the
+// viewer was looking at "today" as of that load (never yanks someone off a day they deliberately
+// went back to) and the real Bangkok day has since moved on. Returns the new day, or null.
+function rolloverDate({ viewedDate, loadedToday, actualToday }) {
+  return viewedDate === loadedToday && loadedToday !== actualToday ? actualToday : null;
+}
 
 function doseItemsOn(prescriptions, doses, date) {
   const byId = new Map(prescriptions.map(p => [p.id, p]));

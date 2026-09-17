@@ -104,17 +104,23 @@ Object.assign(ACTIONS, {
 const CARD_FIELDS = ["full_name", "date_of_birth", "blood_type", "allergies", "conditions", "contact1_name", "contact1_relation", "contact1_phone", "contact2_name", "contact2_relation", "contact2_phone", "notes"];
 
 // Normalizes every row of a tab with normalizeFn, dropping blank spacer rows silently and
-// pushing "<tab> row <id>: <reason>" into warnings for the rest. Returns the successful values.
-function normalizeTab(ctx, tab, normalizeFn, key, warnings) {
+// pushing { user_id, message } into warnings for the rest (user_id "" when ownerFn is omitted or
+// can't place blame on one person). Returns the successful values.
+function normalizeTab(ctx, tab, normalizeFn, key, warnings, ownerFn) {
   const out = [];
   ctx.db.rows(tab).forEach(raw => {
     const row = stripRow(raw);
     if (Object.values(row).every(v => v === "")) return;
     const result = normalizeFn(row);
     if (result.ok) out.push(result[key]);
-    else warnings.push(`${tab} row ${result.id}: ${result.reason}`);
+    else warnings.push({ user_id: ownerFn ? ownerFn(row) : "", message: `${tab} row ${result.id}: ${result.reason}` });
   });
   return out;
+}
+
+function personName(users, userId) {
+  const u = users.find(x => x.user_id === userId);
+  return u ? u.display_name : "Someone";
 }
 
 function medicineLabel(med) {
@@ -206,11 +212,53 @@ Object.assign(ACTIONS, {
   bootstrap(req, ctx) {
     const { user } = requireUser(req, ctx);
     const sharing = sharingRows(ctx);
+    const users = activeUsers(ctx);
     const warnings = [];
-    const prescriptions = normalizeTab(ctx, "Prescriptions", normalizePrescription, "prescription", warnings);
-    const doses = normalizeTab(ctx, "PrescriptionDoses", normalizeDose, "dose", warnings);
+    // Built from the raw (unnormalized) rows so a dose row can still be blamed on its
+    // prescription's owner even when other rows in the tab are broken.
+    const ownerByRxId = new Map(ctx.db.rows("Prescriptions").map(r => [str(r.prescription_id), str(r.user_id)]).filter(([id]) => id));
+    const prescriptions = normalizeTab(ctx, "Prescriptions", normalizePrescription, "prescription", warnings, row => str(row.user_id));
+    const doses = normalizeTab(ctx, "PrescriptionDoses", normalizeDose, "dose", warnings, row => ownerByRxId.get(str(row.prescription_id)) || "");
 
-    const allUserIds = activeUsers(ctx).map(u => u.user_id);
+    // Duplicate Active prescriptions for the same person + medicine: the pill would otherwise
+    // show twice on Today (schedule.js's dedupeActivePrescriptions is what actually hides the
+    // second one there) -- name both ids and the person so whoever reads More can fix the Sheet.
+    const activeCombos = new Map();
+    prescriptions.forEach(p => {
+      if (p.status !== "Active") return;
+      const combo = `${p.userId}|${p.medicineId}`;
+      const prior = activeCombos.get(combo);
+      if (prior) {
+        warnings.push({ user_id: p.userId, message: `${personName(users, p.userId)} has two active prescriptions for the same medicine: ${prior} and ${p.id}.` });
+      } else {
+        activeCombos.set(combo, p.id);
+      }
+    });
+
+    // Duplicate dose rows for the same prescription + time of day: doseItemsOn already keeps only
+    // the first, but silently -- name both ids and the person.
+    const doseCombos = new Map();
+    doses.forEach(d => {
+      const combo = `${d.prescriptionId}|${d.timeOfDay}`;
+      const prior = doseCombos.get(combo);
+      if (prior) {
+        const owner = ownerByRxId.get(d.prescriptionId) || "";
+        warnings.push({ user_id: owner, message: `${personName(users, owner)}'s prescription ${d.prescriptionId} has two dose rows for ${d.timeOfDay}: ${prior} and ${d.id}.` });
+      } else {
+        doseCombos.set(combo, d.id);
+      }
+    });
+
+    // An Active, scheduled (not As-needed) prescription with no dose rows at all never shows on
+    // Today, with nothing to say why.
+    const dosedRxIds = new Set(doses.map(d => d.prescriptionId));
+    prescriptions.forEach(p => {
+      if (p.status === "Active" && p.freq !== FREQ.AS_NEEDED && !dosedRxIds.has(p.id)) {
+        warnings.push({ user_id: p.userId, message: `${personName(users, p.userId)}'s prescription ${p.id} is Active with no dose rows, so it won't show on Today.` });
+      }
+    });
+
+    const allUserIds = users.map(u => u.user_id);
     const medOwners = new Set(readableOwners(user.user_id, allUserIds, SECTIONS.MEDICINES, sharing));
     const careOwners = new Set(readableOwners(user.user_id, allUserIds, SECTIONS.CARE_TEAM, sharing));
 
@@ -219,13 +267,13 @@ Object.assign(ACTIONS, {
     const visibleDoses = doses.filter(d => visibleIds.has(d.prescriptionId));
     const changes = ctx.db.rows("PrescriptionChanges").map(stripRow).filter(c => visibleIds.has(c.prescription_id));
 
-    const cutoff = addDays(bangkokToday(ctx.nowMs()), -59);
+    const cutoff = addDays(bangkokToday(ctx.nowMs()), -(DOSE_LOG_WINDOW_DAYS - 1));
     const doseLog = ctx.db.rows("DoseLog").map(stripRow).filter(r => visibleIds.has(r.prescription_id) && r.date >= cutoff);
 
     const hospitalNumbers = ctx.db.rows("HospitalNumbers").map(stripRow).filter(r => careOwners.has(r.user_id));
     const careTeam = ctx.db.rows("CareTeam").map(stripRow).filter(r => careOwners.has(r.user_id));
 
-    const people = activeUsers(ctx).map(u => ({
+    const people = users.map(u => ({
       user_id: u.user_id,
       display_name: u.display_name,
       role: u.role,
@@ -253,10 +301,18 @@ Object.assign(ACTIONS, {
     };
   },
 
+  // The phone always sends the doseId and amount it showed on screen (I1's ruling). Re-reading
+  // the due dose happens INSIDE the lock (M4: a stale read outside the lock could still race a
+  // concurrent Sheet edit), and a mismatch there means someone edited PrescriptionDoses since
+  // this phone last loaded -- refuse with CONFLICT rather than logging an amount nobody saw.
+  // Already-Taken is still accepted idempotently even if the dose has since changed underneath:
+  // that dose was genuinely logged at the time, and re-asking about it would only alarm Dad.
   tick(req, ctx) {
     const { user } = requireUser(req, ctx);
     const { date, timeOfDay } = requireDateTimeOfDay(req);
     const prescriptionId = str(req.prescriptionId);
+    const doseId = str(req.doseId);
+    const amount = Number(req.amount);
     const found = ownerOf(ctx, prescriptionId);
     if (!found) throw new AppError("BAD_INPUT", "Unknown prescription.");
     if (!canTick(user.user_id, found.ownerId)) {
@@ -264,13 +320,16 @@ Object.assign(ACTIONS, {
       throw new AppError("FORBIDDEN", `Only ${owner ? owner.display_name : "the owner"} can tick these doses.`);
     }
     if (date > bangkokToday(ctx.nowMs())) throw new AppError("FUTURE_DATE", "You can't tick a future date.");
-    const dose = dueDoseFor(ctx, prescriptionId, date, timeOfDay);
-    if (!dose) throw new AppError("NOT_DUE", "This dose isn't due at that time.");
     return ctx.lock(() => {
       const existing = ctx.db.rows("DoseLog").find(r =>
         str(r.prescription_id) === prescriptionId && str(r.date) === date && str(r.time_of_day) === timeOfDay && str(r.status) === "Taken"
       );
       if (existing) return stripRow(existing);
+      const dose = dueDoseFor(ctx, prescriptionId, date, timeOfDay);
+      if (!dose) throw new AppError("NOT_DUE", "This dose isn't due at that time.");
+      if (dose.id !== doseId || dose.amount !== amount) {
+        throw new AppError("CONFLICT", "This dose changed in the Sheet. The app has refreshed — check the amount and tick again.");
+      }
       return writeTaken(ctx, user, prescriptionId, date, timeOfDay, dose);
     });
   },
@@ -278,17 +337,21 @@ Object.assign(ACTIONS, {
   tickAll(req, ctx) {
     const { user } = requireUser(req, ctx);
     const { date, timeOfDay } = requireDateTimeOfDay(req);
-    if (!Array.isArray(req.prescriptionIds) || req.prescriptionIds.length === 0) throw new AppError("BAD_INPUT", "Choose at least one dose to tick.");
+    if (!Array.isArray(req.items) || req.items.length === 0) throw new AppError("BAD_INPUT", "Choose at least one dose to tick.");
     if (date > bangkokToday(ctx.nowMs())) throw new AppError("FUTURE_DATE", "You can't tick a future date.");
     return ctx.lock(() => {
       const ticked = [];
       const skipped = [];
-      req.prescriptionIds.forEach(rawId => {
-        const prescriptionId = str(rawId);
+      req.items.forEach(rawItem => {
+        const item = rawItem && typeof rawItem === "object" ? rawItem : {};
+        const prescriptionId = str(item.prescriptionId);
+        const doseId = str(item.doseId);
+        const amount = Number(item.amount);
         const found = ownerOf(ctx, prescriptionId);
         if (!found || !canTick(user.user_id, found.ownerId)) { skipped.push(prescriptionId); return; }
+        if (alreadyTaken(ctx, prescriptionId, date, timeOfDay)) { skipped.push(prescriptionId); return; }
         const dose = dueDoseFor(ctx, prescriptionId, date, timeOfDay);
-        if (!dose || alreadyTaken(ctx, prescriptionId, date, timeOfDay)) { skipped.push(prescriptionId); return; }
+        if (!dose || dose.id !== doseId || dose.amount !== amount) { skipped.push(prescriptionId); return; }
         ticked.push(writeTaken(ctx, user, prescriptionId, date, timeOfDay, dose));
       });
       return { ticked, skipped };

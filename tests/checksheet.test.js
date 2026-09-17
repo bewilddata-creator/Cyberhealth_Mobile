@@ -141,6 +141,22 @@ test("checkSheet flags a Sharing row with an unknown section or access", () => {
   assert.ok(problems.some(p => p.includes("Sharing") && p.includes("SH01") && p.includes("Delete")), problems.join("\n"));
 });
 
+test("checkSheet names an Active, non-As-needed prescription that has no dose rows at all", () => {
+  const tables = clone(fixtureTables());
+  tables.PrescriptionDoses = tables.PrescriptionDoses.filter(r => r.prescription_id !== "RX01");
+  const problems = runCheckSheet(tables);
+  assert.ok(problems.some(p => p.includes("Prescriptions") && p.includes("RX01") && p.toLowerCase().includes("no dose rows")), problems.join("\n"));
+  // RX04 is Active but "As needed" (no dose rows by design) -- must never be flagged.
+  assert.ok(!problems.some(p => p.includes("RX04")), problems.join("\n"));
+});
+
+test("checkSheet flags a Users row with a blank active cell", () => {
+  const tables = clone(fixtureTables());
+  tables.Users = tables.Users.map(r => (r.user_id === "U03" ? { ...r, active: "" } : r));
+  const problems = runCheckSheet(tables);
+  assert.ok(problems.some(p => p.includes("Users") && p.includes("U03") && p.toLowerCase().includes("active")), problems.join("\n"));
+});
+
 test("checkSheet reports an empty photo_folder_id as needed from release 2", () => {
   const tables = clone(fixtureTables());
   tables.Settings = tables.Settings.map(r => (r.key === "photo_folder_id" ? { ...r, value: "" } : r));

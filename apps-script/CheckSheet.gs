@@ -136,6 +136,7 @@ function checkSheet() {
 
   // Duplicate dose rows for the same prescription and time of day.
   const doseCombos = {};
+  const doseCountByRx_ = {};
   rowsOf("PrescriptionDoses").forEach(row => {
     if (blankRow_(row)) return;
     const combo = `${String(row.prescription_id || "").trim()}|${String(row.time_of_day || "").trim()}`;
@@ -143,6 +144,29 @@ function checkSheet() {
       problems.push(`PrescriptionDoses row ${rowLabel_("PrescriptionDoses", row)}: another dose row (${doseCombos[combo]}) already covers this prescription at this time of day.`);
     } else {
       doseCombos[combo] = rowLabel_("PrescriptionDoses", row);
+    }
+    const pid = String(row.prescription_id || "").trim();
+    if (pid) doseCountByRx_[pid] = (doseCountByRx_[pid] || 0) + 1;
+  });
+
+  // An Active, scheduled (not As-needed) prescription with no dose rows at all never shows on
+  // Today, with nothing in the Sheet to say why.
+  rowsOf("Prescriptions").forEach(row => {
+    if (blankRow_(row)) return;
+    if (String(row.status || "").trim() !== "Active") return;
+    if (String(row.frequency || "").trim() === "As needed") return;
+    const pid = String(row.prescription_id || "").trim();
+    if (pid && !doseCountByRx_[pid]) {
+      problems.push(`Prescriptions row ${rowLabel_("Prescriptions", row)}: Active with no dose rows, so it won't show on Today.`);
+    }
+  });
+
+  // A blank active cell is treated as "active" by the app (isActiveUser), but that's easy to
+  // mistake for a typo or an unfinished row -- call it out so the admin types TRUE/FALSE on purpose.
+  rowsOf("Users").forEach(row => {
+    if (blankRow_(row)) return;
+    if (String(row.active == null ? "" : row.active).trim() === "") {
+      problems.push(`Users row ${rowLabel_("Users", row)}: active is blank; type TRUE or FALSE.`);
     }
   });
 

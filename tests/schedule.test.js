@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  TIMES_OF_DAY, FREQ, WEEKDAYS,
+  TIMES_OF_DAY, FREQ, WEEKDAYS, DOSE_LOG_WINDOW_DAYS,
   parseDate, addDays, daysBetween, weekdayOf, bangkokToday, bangkokStamp, bangkokHour,
   timeOfDayAtHour, bangkokTimeOfDay,
   normalizePrescription, normalizeDose,
-  isDue, doseItemsOn, doseKey, slotStatus,
+  isDue, doseItemsOn, doseKey, slotStatus, dedupeActivePrescriptions, rolloverDate,
   lastChangeDate, countsOnDay,
   describeFrequency, describeDoses,
 } from "../js/schedule.js";
@@ -112,6 +112,12 @@ test("normalizePrescription rejects Every N days without a valid count_from", ()
 test("normalizePrescription rejects Weekdays with no valid day", () => {
   assert.match(normalizePrescription(rxRow({ frequency: "Weekdays", weekdays: "" })).reason, /weekdays/);
   assert.match(normalizePrescription(rxRow({ frequency: "Weekdays", weekdays: "someday" })).reason, /weekdays/);
+});
+
+test("normalizePrescription REJECTS weekdays with any unknown token, naming the bad one, instead of silently dropping it", () => {
+  const r = normalizePrescription(rxRow({ frequency: "Weekdays", weekdays: "Mon, Wendesday" }));
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /Wendesday/);
 });
 
 test("normalizePrescription rejects a bad status", () => {
@@ -306,6 +312,36 @@ test("describeDoses", () => {
   ];
   assert.equal(describeDoses(doses), "Morning 1 tablet · Evening 2 tablets");
   assert.equal(describeDoses([]), "When needed");
+});
+
+// ---- dedupeActivePrescriptions ----
+
+test("dedupeActivePrescriptions keeps the first Active row per person+medicine; Stopped rows are never touched", () => {
+  const p1 = rx({ prescription_id: "RX1", medicine_id: "MED01" });
+  const p2 = rx({ prescription_id: "RX2", medicine_id: "MED01" }); // duplicate Active for the same medicine
+  const p3 = rx({ prescription_id: "RX3", medicine_id: "MED02" });
+  const stoppedDup = rx({ prescription_id: "RX4", medicine_id: "MED01", status: "Stopped" });
+  const out = dedupeActivePrescriptions([p1, p2, p3, stoppedDup]);
+  assert.deepEqual(out.map(p => p.id), ["RX1", "RX3", "RX4"]);
+});
+
+test("dedupeActivePrescriptions is a no-op with no duplicates", () => {
+  const p1 = rx({ prescription_id: "RX1", medicine_id: "MED01" });
+  const p2 = rx({ prescription_id: "RX2", medicine_id: "MED02" });
+  assert.deepEqual(dedupeActivePrescriptions([p1, p2]).map(p => p.id), ["RX1", "RX2"]);
+});
+
+// ---- rolloverDate ----
+
+test("rolloverDate moves to the new day only when the viewed day was 'today' as loaded and the real day has since changed", () => {
+  assert.equal(rolloverDate({ viewedDate: "2026-09-15", loadedToday: "2026-09-15", actualToday: "2026-09-16" }), "2026-09-16");
+  assert.equal(rolloverDate({ viewedDate: "2026-09-15", loadedToday: "2026-09-15", actualToday: "2026-09-15" }), null);
+  // Deliberately viewing yesterday must not get yanked forward to today.
+  assert.equal(rolloverDate({ viewedDate: "2026-09-14", loadedToday: "2026-09-15", actualToday: "2026-09-16" }), null);
+});
+
+test("DOSE_LOG_WINDOW_DAYS is 60, matching the server's dose_log cutoff", () => {
+  assert.equal(DOSE_LOG_WINDOW_DAYS, 60);
 });
 
 test("describeDoses pluralizes every Unit value from the Lists tab correctly", () => {

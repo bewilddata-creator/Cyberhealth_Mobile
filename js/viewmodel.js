@@ -1,5 +1,5 @@
 // Pure screen models built from bootstrap data. No DOM.
-import { TIMES_OF_DAY, FREQ, WEEKDAYS, weekdayOf, addDays, doseItemsOn, slotStatus, countsOnDay, describeFrequency, describeDoses } from "./schedule.js";
+import { TIMES_OF_DAY, FREQ, WEEKDAYS, DOSE_LOG_WINDOW_DAYS, weekdayOf, addDays, doseItemsOn, slotStatus, countsOnDay, describeFrequency, describeDoses, dedupeActivePrescriptions } from "./schedule.js";
 import { resolveMockPhoto } from "./mockphoto.js";
 
 export function driveImageUrl(link) {
@@ -30,7 +30,9 @@ function groupBy(rows, key) {
 
 export function indexBoot(boot) {
   const ticks = new Map();
-  boot.dose_log.forEach(r => ticks.set(`${r.date}|${r.time_of_day}|${r.prescription_id}`, r));
+  // Only a status=Taken row is a tick -- a Skipped row (release 1 doesn't offer skipping from the
+  // app, but a hand-typed Sheet row can still say it) must never render as if the dose was taken.
+  boot.dose_log.forEach(r => { if (r.status === "Taken") ticks.set(`${r.date}|${r.time_of_day}|${r.prescription_id}`, r); });
   return {
     boot,
     medicines: byId(boot.medicines, "medicine_id"),
@@ -45,10 +47,19 @@ export function indexBoot(boot) {
 }
 
 function ownerPrescriptions(idx, ownerId) {
-  return [...idx.prescriptions.values()].filter(p => p.userId === ownerId);
+  // A hand-edited Sheet can end up with two Active rows for the same person+medicine (see
+  // bootstrap's warnings) -- collapse to the first so the pill never shows twice.
+  return dedupeActivePrescriptions([...idx.prescriptions.values()].filter(p => p.userId === ownerId));
 }
 function dosesFor(idx, prescriptions) {
   return prescriptions.flatMap(p => idx.dosesByPrescription.get(p.id) || []);
+}
+
+// The oldest day bootstrap's dose_log actually covers (today - (window-1)); anything older is a
+// day the phone has no Taken/Skipped rows for at all, taken or not -- never mistake that silence
+// for a missed dose.
+function loadedFloor(today) {
+  return addDays(today, -(DOSE_LOG_WINDOW_DAYS - 1));
 }
 
 export function todayModel(idx, { ownerId, viewerId, date, today, nowTimeOfDay }) {
@@ -56,6 +67,7 @@ export function todayModel(idx, { ownerId, viewerId, date, today, nowTimeOfDay }
   const doses = dosesFor(idx, prescriptions);
   const viewerIsOwner = !!viewerId && viewerId === ownerId;
   const canTick = viewerIsOwner && date <= today;
+  const historyNotLoaded = date < loadedFloor(today);
   const items = doseItemsOn(prescriptions, doses, date).map(it => {
     const row = idx.ticks.get(it.key);
     const medicine = idx.medicines.get(it.prescription.medicineId) || null;
@@ -66,9 +78,12 @@ export function todayModel(idx, { ownerId, viewerId, date, today, nowTimeOfDay }
     const slotItems = items.filter(i => i.timeOfDay === timeOfDay);
     const taken = slotItems.filter(i => i.tick).length;
     const due = slotItems.length;
+    const rawStatus = slotStatus({ due, taken, date, today, timeOfDay, nowTimeOfDay });
+    // No DoseLog rows were loaded for a day this old, so "0 taken" proves nothing -- showing it
+    // as "missed" would be a flat-out lie the app can't back up.
+    const status = historyNotLoaded && rawStatus === "missed" ? "unknown" : rawStatus;
     return {
-      timeOfDay, items: slotItems, taken, due,
-      status: slotStatus({ due, taken, date, today, timeOfDay, nowTimeOfDay }),
+      timeOfDay, items: slotItems, taken, due, status,
       canTickAll: canTick && due - taken > 1,
     };
   });
@@ -76,7 +91,7 @@ export function todayModel(idx, { ownerId, viewerId, date, today, nowTimeOfDay }
     .filter(p => p.freq === FREQ.AS_NEEDED && p.status === "Active" && date >= p.startedOn)
     .map(p => ({ prescription: p, medicine: idx.medicines.get(p.medicineId) || null }));
   return {
-    date, isToday: date === today, canTick, viewerIsOwner,
+    date, isToday: date === today, canTick, viewerIsOwner, historyNotLoaded,
     taken: slots.reduce((a, s) => a + s.taken, 0),
     due: slots.reduce((a, s) => a + s.due, 0),
     slots, asNeeded,
@@ -94,6 +109,9 @@ function dayCounts(idx, ownerId, day, includeTimes, filterFn) {
 
 function dayResult(idx, ownerId, day, today, nowTimeOfDay) {
   if (day > today) return "";
+  // Older than the loaded DoseLog window: no Taken/Skipped rows for this day exist to check
+  // against, so show no dot rather than a false "missed" (M2).
+  if (day < loadedFloor(today)) return "";
   let includeTimes, filterFn;
   if (day < today) {
     includeTimes = TIMES_OF_DAY;
@@ -105,6 +123,19 @@ function dayResult(idx, ownerId, day, today, nowTimeOfDay) {
   const { due, taken } = dayCounts(idx, ownerId, day, includeTimes, filterFn);
   if (!due) return "";
   return taken === due ? "ok" : "miss";
+}
+
+// Which of bootstrap's { user_id, message } warnings Today's banner should show for the person
+// being viewed: that person's own, plus Sheet-wide ones (blank user_id) that could affect anyone.
+export function warningsForOwner(warnings, ownerId) {
+  return (warnings || []).filter(w => w.user_id === ownerId || w.user_id === "");
+}
+
+// Which person the app should open on: the spec's Primary user, but only when the viewer can
+// actually read their Medicines -- otherwise the viewer's own record (M5).
+export function defaultOwnerId(people, viewerId) {
+  const primary = (people || []).find(p => p.role === "Primary" && p.medicines);
+  return primary ? primary.user_id : viewerId;
 }
 
 export function weekModel(idx, ownerId, date, today, nowTimeOfDay) {

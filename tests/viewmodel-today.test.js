@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { handle } from "../server/actions.js";
 import { fakeCtx, loginAs } from "./fixtures.js";
-import { indexBoot, todayModel, weekModel } from "../js/viewmodel.js";
+import { indexBoot, todayModel, weekModel, warningsForOwner, defaultOwnerId } from "../js/viewmodel.js";
 
 function bootAs(ctx, name, password) {
   const token = loginAs(ctx, name, password);
@@ -53,7 +53,7 @@ test("Pim viewing Dad's Today: canTick is false", () => {
 test("a ticked item shows the amount logged at the time, even after the dose row later changes", () => {
   const ctx = fakeCtx();
   const token = loginAs(ctx, "Dad", "dad123");
-  const tickResult = handle({ action: "tick", token, prescriptionId: "RX01", date: "2026-09-15", timeOfDay: "Morning" }, ctx);
+  const tickResult = handle({ action: "tick", token, prescriptionId: "RX01", date: "2026-09-15", timeOfDay: "Morning", doseId: "DS01", amount: 2 }, ctx);
   assert.equal(tickResult.ok, true);
 
   // The dose changes after the tick was recorded.
@@ -78,7 +78,7 @@ test("canTickAll is true only when more than one dose in the slot is untaken", (
   assert.equal(morningBefore.due - morningBefore.taken, 2); // RX01 + RX02, both untaken
   assert.equal(morningBefore.canTickAll, true);
 
-  handle({ action: "tick", token, prescriptionId: "RX01", date: "2026-09-15", timeOfDay: "Morning" }, ctx);
+  handle({ action: "tick", token, prescriptionId: "RX01", date: "2026-09-15", timeOfDay: "Morning", doseId: "DS01", amount: 2 }, ctx);
   const r1 = handle({ action: "bootstrap", token }, ctx);
   const idx1 = indexBoot(r1.data);
   const after = todayModel(idx1, { ownerId: "U01", viewerId: "U01", date: "2026-09-15", today: "2026-09-15", nowTimeOfDay: "Morning" });
@@ -93,8 +93,8 @@ test("weekModel counts a past day for a prescription only up to its last change"
   // RX01 and RX02 are both due 09-13 (Sun) and 09-14 (Mon). Tick RX02's Morning and Evening
   // doses on 09-13, but not RX01's -- if RX01 still counted on 09-13, that day would read
   // "miss" (an untaken due dose); it should read "ok" once RX01 is excluded by the later change.
-  handle({ action: "tick", token, prescriptionId: "RX02", date: "2026-09-13", timeOfDay: "Morning" }, ctx);
-  handle({ action: "tick", token, prescriptionId: "RX02", date: "2026-09-13", timeOfDay: "Evening" }, ctx);
+  handle({ action: "tick", token, prescriptionId: "RX02", date: "2026-09-13", timeOfDay: "Morning", doseId: "DS02", amount: 1 }, ctx);
+  handle({ action: "tick", token, prescriptionId: "RX02", date: "2026-09-13", timeOfDay: "Evening", doseId: "DS03", amount: 2 }, ctx);
   ctx.db.append("PrescriptionChanges", {
     change_id: "CH99", prescription_id: "RX01", changed_at: "2026-09-14 10:00", changed_by: "U01",
     change_type: "Dose changed", doctor_id: "DOC01", reason: "test", before: "Morning 2 tablet", after: "Morning 2 tablet",
@@ -127,4 +127,107 @@ test("weekModel is Monday-first", () => {
   assert.equal(week[0].weekday, "Mon");
   assert.equal(week[6].weekday, "Sun");
   assert.ok(week.some(d => d.date === "2026-09-15"));
+});
+
+// ---- I2: a Skipped DoseLog row must never render as taken ----
+
+test("indexBoot only turns a status=Taken DoseLog row into a tick; a Skipped row is ignored", () => {
+  const boot = {
+    dose_log: [
+      { date: "2026-09-15", time_of_day: "Morning", prescription_id: "RX01", status: "Taken", amount_taken: "2", unit: "tablet", taken_at: "2026-09-15 08:00" },
+      { date: "2026-09-15", time_of_day: "Evening", prescription_id: "RX02", status: "Skipped", amount_taken: "2", unit: "tablet", taken_at: "2026-09-15 20:00" },
+    ],
+    medicines: [], hospitals: [], doctors: [], people: [], prescriptions: [], doses: [], changes: [],
+  };
+  const idx = indexBoot(boot);
+  assert.ok(idx.ticks.has("2026-09-15|Morning|RX01"), "a Taken row must still be a tick");
+  assert.ok(!idx.ticks.has("2026-09-15|Evening|RX02"), "a Skipped row must never be shown as taken");
+});
+
+// ---- C2: a duplicate Active prescription for the same person+medicine must not show twice on Today ----
+
+test("todayModel: a second Active prescription for the same person+medicine is collapsed to the first, not shown twice", () => {
+  const ctx = fakeCtx();
+  ctx.db.tables.Prescriptions.push({
+    prescription_id: "RX98", user_id: "U01", medicine_id: "MED01", frequency: "Daily", every_n_days: "",
+    weekdays: "", count_from: "", meal_timing: "Any time", doctor_id: "", status: "Active",
+    started_on: "2026-01-01", notes: "", created_at: "", created_by: "", updated_at: "", updated_by: "",
+  });
+  ctx.db.tables.PrescriptionDoses.push({ dose_id: "DS98", prescription_id: "RX98", time_of_day: "Morning", amount: "9", unit: "tablet" });
+  const { boot } = bootAs(ctx, "Dad", "dad123");
+  const idx = indexBoot(boot);
+  const model = todayModel(idx, { ownerId: "U01", viewerId: "U01", date: "2026-09-15", today: "2026-09-15", nowTimeOfDay: "Morning" });
+  const morning = model.slots.find(s => s.timeOfDay === "Morning");
+  const forMed01 = morning.items.filter(i => i.prescription.medicineId === "MED01");
+  assert.equal(forMed01.length, 1, "MED01 must appear once, not once per duplicate Prescriptions row");
+  assert.equal(forMed01[0].prescription.id, "RX01", "the first row (by Sheet order) wins");
+});
+
+// ---- M2: a day older than the loaded 60-day DoseLog window must never read false "missed" ----
+
+test("todayModel: a date older than the 60-day loaded window flags historyNotLoaded and never reports 'missed'", () => {
+  const ctx = fakeCtx();
+  const { boot } = bootAs(ctx, "Dad", "dad123");
+  const idx = indexBoot(boot);
+  const today = "2026-09-15";
+  const oldDate = "2026-06-01"; // >90 days before today, and RX01 (Daily, started 2026-01-10) is due
+  const model = todayModel(idx, { ownerId: "U01", viewerId: "U01", date: oldDate, today, nowTimeOfDay: "Morning" });
+  assert.equal(model.historyNotLoaded, true);
+  const morning = model.slots.find(s => s.timeOfDay === "Morning");
+  assert.ok(morning.due > 0, "RX01 should still be due that day");
+  assert.notEqual(morning.status, "missed", "an untracked old day must never read as a false 'missed'");
+});
+
+test("todayModel: a date within the loaded window is unaffected by historyNotLoaded", () => {
+  const ctx = fakeCtx();
+  const { boot } = bootAs(ctx, "Dad", "dad123");
+  const idx = indexBoot(boot);
+  const model = todayModel(idx, { ownerId: "U01", viewerId: "U01", date: "2026-08-01", today: "2026-09-15", nowTimeOfDay: "Morning" });
+  assert.equal(model.historyNotLoaded, false);
+});
+
+test("weekModel: a day older than the loaded window shows no dot, not a false 'miss'", () => {
+  const ctx = fakeCtx();
+  const { boot } = bootAs(ctx, "Dad", "dad123");
+  const idx = indexBoot(boot);
+  const week = weekModel(idx, "U01", "2026-06-01", "2026-09-15", "Morning");
+  const day = week.find(d => d.date === "2026-06-01");
+  assert.ok(day);
+  assert.equal(day.result, "", "older than the DoseLog window: no dot, never 'miss'");
+});
+
+// ---- warningsForOwner (C2's Today banner) ----
+
+test("warningsForOwner shows only warnings for that person, plus sheet-wide (blank user_id) ones", () => {
+  const warnings = [
+    { user_id: "U01", message: "Dad's thing" },
+    { user_id: "U02", message: "Pim's thing" },
+    { user_id: "", message: "Sheet-wide thing" },
+  ];
+  assert.deepEqual(warningsForOwner(warnings, "U01").map(w => w.message), ["Dad's thing", "Sheet-wide thing"]);
+  assert.deepEqual(warningsForOwner(warnings, "U02").map(w => w.message), ["Pim's thing", "Sheet-wide thing"]);
+  assert.deepEqual(warningsForOwner([], "U01"), []);
+});
+
+// ---- defaultOwnerId (M5) ----
+
+test("defaultOwnerId opens on the Primary person when the viewer can read their Medicines", () => {
+  const people = [
+    { user_id: "U01", display_name: "Dad", role: "Primary", medicines: "View" },
+    { user_id: "U02", display_name: "Pim", role: "Family", medicines: "Edit" },
+  ];
+  assert.equal(defaultOwnerId(people, "U02"), "U01");
+});
+
+test("defaultOwnerId falls back to the viewer when Primary's Medicines aren't readable", () => {
+  const people = [
+    { user_id: "U01", display_name: "Dad", role: "Primary", medicines: "" },
+    { user_id: "U02", display_name: "Pim", role: "Family", medicines: "Edit" },
+  ];
+  assert.equal(defaultOwnerId(people, "U02"), "U02");
+});
+
+test("defaultOwnerId falls back to the viewer when no one is Primary", () => {
+  const people = [{ user_id: "U02", display_name: "Pim", role: "Family", medicines: "Edit" }];
+  assert.equal(defaultOwnerId(people, "U02"), "U02");
 });

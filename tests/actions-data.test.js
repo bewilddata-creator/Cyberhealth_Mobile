@@ -145,9 +145,11 @@ test("bootstrap warns on an unknown frequency and a zero amount, drops those row
   const token = loginAs(ctx, "Dad", "dad123");
   const r = handle({ action: "bootstrap", token }, ctx);
   assert.equal(code(r), "OK");
+  // Warnings are objects naming the owner (user_id), not bare strings, so the client can show a
+  // per-person banner on Today (see C2's ruling) as well as the full list on More.
   assert.deepEqual(r.data.warnings, [
-    'Prescriptions row RX99: unknown frequency "Bogus"',
-    "PrescriptionDoses row DS99: amount must be a number above 0",
+    { user_id: "U01", message: 'Prescriptions row RX99: unknown frequency "Bogus"' },
+    { user_id: "U01", message: "PrescriptionDoses row DS99: amount must be a number above 0" },
   ]);
   assert.ok(!r.data.prescriptions.some(p => p.id === "RX99"));
   assert.ok(!r.data.doses.some(dd => dd.id === "DS99"));
@@ -158,12 +160,62 @@ test("bootstrap requires login", () => {
   assert.equal(code(handle({ action: "bootstrap" }, ctx)), "AUTH_REQUIRED");
 });
 
+test("bootstrap warns (naming both ids and the person) when two Active prescriptions cover the same person and medicine, and Today shows only the first", () => {
+  const ctx = fakeCtx();
+  ctx.db.tables.Prescriptions.push({
+    prescription_id: "RX99", user_id: "U01", medicine_id: "MED01", frequency: "Daily", every_n_days: "",
+    weekdays: "", count_from: "", meal_timing: "Any time", doctor_id: "", status: "Active",
+    started_on: "2026-01-01", notes: "", created_at: "", created_by: "", updated_at: "", updated_by: "",
+  });
+  const token = loginAs(ctx, "Dad", "dad123");
+  const r = handle({ action: "bootstrap", token }, ctx);
+  assert.equal(code(r), "OK");
+  const w = r.data.warnings.find(x => x.message.includes("RX01") && x.message.includes("RX99"));
+  assert.ok(w, JSON.stringify(r.data.warnings));
+  assert.equal(w.user_id, "U01");
+  assert.match(w.message, /Dad/);
+  // Both rows still come back from bootstrap (so the Meds screen can list them for fixing) --
+  // it's the pure schedule.js/viewmodel.js layer that collapses which one Today shows.
+  assert.ok(r.data.prescriptions.some(p => p.id === "RX01"));
+  assert.ok(r.data.prescriptions.some(p => p.id === "RX99"));
+});
+
+test("bootstrap warns (naming both ids and the person) when two PrescriptionDoses rows cover the same prescription and time of day", () => {
+  const ctx = fakeCtx();
+  ctx.db.tables.PrescriptionDoses.push({ dose_id: "DS99", prescription_id: "RX01", time_of_day: "Morning", amount: "9", unit: "tablet" });
+  const token = loginAs(ctx, "Dad", "dad123");
+  const r = handle({ action: "bootstrap", token }, ctx);
+  assert.equal(code(r), "OK");
+  const w = r.data.warnings.find(x => x.message.includes("DS01") && x.message.includes("DS99"));
+  assert.ok(w, JSON.stringify(r.data.warnings));
+  assert.equal(w.user_id, "U01");
+  assert.match(w.message, /Dad/);
+});
+
+test("bootstrap warns (naming the person) when an Active, non-As-needed prescription has no dose rows", () => {
+  const ctx = fakeCtx();
+  ctx.db.tables.PrescriptionDoses = ctx.db.tables.PrescriptionDoses.filter(r => r.prescription_id !== "RX01");
+  const token = loginAs(ctx, "Dad", "dad123");
+  const r = handle({ action: "bootstrap", token }, ctx);
+  assert.equal(code(r), "OK");
+  const w = r.data.warnings.find(x => x.message.includes("RX01"));
+  assert.ok(w, JSON.stringify(r.data.warnings));
+  assert.equal(w.user_id, "U01");
+  assert.match(w.message, /Dad/);
+  assert.match(w.message, /no dose rows/);
+  // RX04 (As needed, no doses by design) must never trigger this warning.
+  assert.ok(!r.data.warnings.some(x => x.message.includes("RX04")));
+});
+
 // ---- tick ----
+// RX01's Morning dose row is DS01, amount 2 tablet (see tests/fixtures.js) -- the client always
+// sends the doseId and amount it showed, so the server can catch a Sheet edit made after the
+// phone's last load (I1).
 
 test("tick: Dad ticks RX01 Morning today, and repeating it is idempotent", () => {
   const ctx = fakeCtx();
   const token = loginAs(ctx, "Dad", "dad123");
-  const r = handle({ action: "tick", token, prescriptionId: "RX01", date: "2026-09-15", timeOfDay: "Morning" }, ctx);
+  const r = handle({ action: "tick", token, prescriptionId: "RX01", date: "2026-09-15", timeOfDay: "Morning", doseId: "DS01", amount: 2 }, ctx);
   assert.equal(code(r), "OK");
   assert.equal(r.data.log_id, "LOG-000001");
   assert.equal(r.data.amount_taken, "2");
@@ -172,7 +224,7 @@ test("tick: Dad ticks RX01 Morning today, and repeating it is idempotent", () =>
   assert.equal(r.data.taken_by, "U01");
   assert.equal(ctx.db.tables.DoseLog.length, 1);
 
-  const again = handle({ action: "tick", token, prescriptionId: "RX01", date: "2026-09-15", timeOfDay: "Morning" }, ctx);
+  const again = handle({ action: "tick", token, prescriptionId: "RX01", date: "2026-09-15", timeOfDay: "Morning", doseId: "DS01", amount: 2 }, ctx);
   assert.equal(code(again), "OK");
   assert.equal(again.data.log_id, "LOG-000001");
   assert.equal(ctx.db.tables.DoseLog.length, 1);
@@ -181,7 +233,7 @@ test("tick: Dad ticks RX01 Morning today, and repeating it is idempotent", () =>
 test("tick: only the owner can tick", () => {
   const ctx = fakeCtx();
   const pimToken = loginAs(ctx, "Pim", "pim123");
-  const r = handle({ action: "tick", token: pimToken, prescriptionId: "RX01", date: "2026-09-15", timeOfDay: "Morning" }, ctx);
+  const r = handle({ action: "tick", token: pimToken, prescriptionId: "RX01", date: "2026-09-15", timeOfDay: "Morning", doseId: "DS01", amount: 2 }, ctx);
   assert.equal(code(r), "FORBIDDEN");
   assert.equal(r.error.message, "Only Dad can tick these doses.");
   assert.equal(ctx.db.tables.DoseLog.length, 0);
@@ -190,7 +242,7 @@ test("tick: only the owner can tick", () => {
 test("tick: a future date is refused", () => {
   const ctx = fakeCtx();
   const token = loginAs(ctx, "Dad", "dad123");
-  const r = handle({ action: "tick", token, prescriptionId: "RX01", date: "2026-09-16", timeOfDay: "Morning" }, ctx);
+  const r = handle({ action: "tick", token, prescriptionId: "RX01", date: "2026-09-16", timeOfDay: "Morning", doseId: "DS01", amount: 2 }, ctx);
   assert.equal(code(r), "FUTURE_DATE");
   assert.equal(r.error.message, "You can't tick a future date.");
   assert.equal(ctx.db.tables.DoseLog.length, 0);
@@ -199,13 +251,13 @@ test("tick: a future date is refused", () => {
 test("tick: NOT_DUE for a time of day with no dose row, a day the prescription isn't due, and a stopped prescription", () => {
   const ctx = fakeCtx();
   const token = loginAs(ctx, "Dad", "dad123");
-  const evening = handle({ action: "tick", token, prescriptionId: "RX01", date: "2026-09-15", timeOfDay: "Evening" }, ctx);
+  const evening = handle({ action: "tick", token, prescriptionId: "RX01", date: "2026-09-15", timeOfDay: "Evening", doseId: "DS01", amount: 2 }, ctx);
   assert.equal(code(evening), "NOT_DUE");
 
-  const tuesday = handle({ action: "tick", token, prescriptionId: "RX03", date: "2026-09-15", timeOfDay: "Morning" }, ctx);
+  const tuesday = handle({ action: "tick", token, prescriptionId: "RX03", date: "2026-09-15", timeOfDay: "Morning", doseId: "DS04", amount: 1 }, ctx);
   assert.equal(code(tuesday), "NOT_DUE"); // RX03 is Weekdays: Wed only; 2026-09-15 is a Tuesday
 
-  const stopped = handle({ action: "tick", token, prescriptionId: "RX06", date: "2026-09-15", timeOfDay: "Morning" }, ctx);
+  const stopped = handle({ action: "tick", token, prescriptionId: "RX06", date: "2026-09-15", timeOfDay: "Morning", doseId: "DS06", amount: 1 }, ctx);
   assert.equal(code(stopped), "NOT_DUE"); // RX06 is Stopped
 
   assert.equal(ctx.db.tables.DoseLog.length, 0);
@@ -214,7 +266,7 @@ test("tick: NOT_DUE for a time of day with no dose row, a day the prescription i
 test("tick: a late tick for yesterday is allowed", () => {
   const ctx = fakeCtx();
   const token = loginAs(ctx, "Dad", "dad123");
-  const r = handle({ action: "tick", token, prescriptionId: "RX01", date: "2026-09-14", timeOfDay: "Morning" }, ctx);
+  const r = handle({ action: "tick", token, prescriptionId: "RX01", date: "2026-09-14", timeOfDay: "Morning", doseId: "DS01", amount: 2 }, ctx);
   assert.equal(code(r), "OK");
   assert.equal(ctx.db.tables.DoseLog.length, 1);
   assert.equal(ctx.db.tables.DoseLog[0].date, "2026-09-14");
@@ -223,9 +275,42 @@ test("tick: a late tick for yesterday is allowed", () => {
 test("tick: BAD_INPUT for a bad date or time of day", () => {
   const ctx = fakeCtx();
   const token = loginAs(ctx, "Dad", "dad123");
-  assert.equal(code(handle({ action: "tick", token, prescriptionId: "RX01", date: "not-a-date", timeOfDay: "Morning" }, ctx)), "BAD_INPUT");
-  assert.equal(code(handle({ action: "tick", token, prescriptionId: "RX01", date: "2026-09-15", timeOfDay: "Midnight" }, ctx)), "BAD_INPUT");
+  assert.equal(code(handle({ action: "tick", token, prescriptionId: "RX01", date: "not-a-date", timeOfDay: "Morning", doseId: "DS01", amount: 2 }, ctx)), "BAD_INPUT");
+  assert.equal(code(handle({ action: "tick", token, prescriptionId: "RX01", date: "2026-09-15", timeOfDay: "Midnight", doseId: "DS01", amount: 2 }, ctx)), "BAD_INPUT");
   assert.equal(ctx.db.tables.DoseLog.length, 0);
+});
+
+test("tick: CONFLICT when the Sheet's amount no longer matches what the phone sent, and nothing is written (I1)", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Dad", "dad123");
+  // The Sheet is edited (DS01 1 -> 3) after the phone loaded, but the phone still sends what it
+  // showed (2, the fixture's original amount).
+  ctx.db.update("PrescriptionDoses", "dose_id", "DS01", { amount: "3" });
+  const r = handle({ action: "tick", token, prescriptionId: "RX01", date: "2026-09-15", timeOfDay: "Morning", doseId: "DS01", amount: 2 }, ctx);
+  assert.equal(code(r), "CONFLICT");
+  assert.equal(r.error.message, "This dose changed in the Sheet. The app has refreshed — check the amount and tick again.");
+  assert.equal(ctx.db.tables.DoseLog.length, 0);
+});
+
+test("tick: CONFLICT when the dose row id itself no longer matches (a different dose row now covers that slot)", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Dad", "dad123");
+  const r = handle({ action: "tick", token, prescriptionId: "RX01", date: "2026-09-15", timeOfDay: "Morning", doseId: "DS-STALE", amount: 2 }, ctx);
+  assert.equal(code(r), "CONFLICT");
+  assert.equal(ctx.db.tables.DoseLog.length, 0);
+});
+
+test("tick: an already-Taken row is still returned idempotently even if the Sheet's dose has since changed (I1's ruling)", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Dad", "dad123");
+  const first = handle({ action: "tick", token, prescriptionId: "RX01", date: "2026-09-15", timeOfDay: "Morning", doseId: "DS01", amount: 2 }, ctx);
+  assert.equal(code(first), "OK");
+  ctx.db.update("PrescriptionDoses", "dose_id", "DS01", { amount: "3" });
+  // A stale retry (still claiming the old amount) must not conflict: the dose was already logged.
+  const again = handle({ action: "tick", token, prescriptionId: "RX01", date: "2026-09-15", timeOfDay: "Morning", doseId: "DS01", amount: 2 }, ctx);
+  assert.equal(code(again), "OK");
+  assert.equal(again.data.log_id, first.data.log_id);
+  assert.equal(ctx.db.tables.DoseLog.length, 1);
 });
 
 // ---- tickAll ----
@@ -233,27 +318,47 @@ test("tick: BAD_INPUT for a bad date or time of day", () => {
 test("tickAll: ticks only the caller's own, due, not-yet-ticked ids; a repeat skips everything", () => {
   const ctx = fakeCtx();
   const token = loginAs(ctx, "Dad", "dad123");
-  const r = handle({ action: "tickAll", token, date: "2026-09-15", timeOfDay: "Morning", prescriptionIds: ["RX01", "RX02", "RX05", "RX99"] }, ctx);
+  const items = [
+    { prescriptionId: "RX01", doseId: "DS01", amount: 2 },
+    { prescriptionId: "RX02", doseId: "DS02", amount: 1 },
+    { prescriptionId: "RX05", doseId: "DS05", amount: 0.5 },
+    { prescriptionId: "RX99", doseId: "DS-NOPE", amount: 1 },
+  ];
+  const r = handle({ action: "tickAll", token, date: "2026-09-15", timeOfDay: "Morning", items }, ctx);
   assert.equal(code(r), "OK");
   assert.deepEqual(r.data.ticked.map(x => x.prescription_id).sort(), ["RX01", "RX02"]);
   assert.deepEqual(r.data.skipped.sort(), ["RX05", "RX99"]); // RX05 is Pim's; RX99 doesn't exist
   assert.equal(ctx.db.tables.DoseLog.length, 2);
 
-  const again = handle({ action: "tickAll", token, date: "2026-09-15", timeOfDay: "Morning", prescriptionIds: ["RX01", "RX02", "RX05", "RX99"] }, ctx);
+  const again = handle({ action: "tickAll", token, date: "2026-09-15", timeOfDay: "Morning", items }, ctx);
   assert.equal(code(again), "OK");
   assert.deepEqual(again.data.ticked, []);
   assert.deepEqual(again.data.skipped.sort(), ["RX01", "RX02", "RX05", "RX99"]);
   assert.equal(ctx.db.tables.DoseLog.length, 2);
 });
 
-test("tickAll: BAD_INPUT when prescriptionIds is missing, not an array, or empty", () => {
+test("tickAll: BAD_INPUT when items is missing, not an array, or empty", () => {
   const ctx = fakeCtx();
   const token = loginAs(ctx, "Dad", "dad123");
-  for (const prescriptionIds of [undefined, "RX01", [], null]) {
-    const r = handle({ action: "tickAll", token, date: "2026-09-15", timeOfDay: "Morning", prescriptionIds }, ctx);
+  for (const items of [undefined, "RX01", [], null]) {
+    const r = handle({ action: "tickAll", token, date: "2026-09-15", timeOfDay: "Morning", items }, ctx);
     assert.equal(code(r), "BAD_INPUT");
   }
   assert.equal(ctx.db.tables.DoseLog.length, 0);
+});
+
+test("tickAll: one item with a stale amount is skipped as a conflict; the rest still tick (I1)", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Dad", "dad123");
+  const items = [
+    { prescriptionId: "RX01", doseId: "DS01", amount: 2 },
+    { prescriptionId: "RX02", doseId: "DS02", amount: 99 }, // stale: the Sheet's DS02 is 1, not 99
+  ];
+  const r = handle({ action: "tickAll", token, date: "2026-09-15", timeOfDay: "Morning", items }, ctx);
+  assert.equal(code(r), "OK");
+  assert.deepEqual(r.data.ticked.map(x => x.prescription_id), ["RX01"]);
+  assert.deepEqual(r.data.skipped, ["RX02"]);
+  assert.equal(ctx.db.tables.DoseLog.length, 1);
 });
 
 // ---- untick ----
@@ -261,7 +366,7 @@ test("tickAll: BAD_INPUT when prescriptionIds is missing, not an array, or empty
 test("untick removes the Taken row; owner only", () => {
   const ctx = fakeCtx();
   const token = loginAs(ctx, "Dad", "dad123");
-  handle({ action: "tick", token, prescriptionId: "RX01", date: "2026-09-15", timeOfDay: "Morning" }, ctx);
+  handle({ action: "tick", token, prescriptionId: "RX01", date: "2026-09-15", timeOfDay: "Morning", doseId: "DS01", amount: 2 }, ctx);
   assert.equal(ctx.db.tables.DoseLog.length, 1);
 
   const pimToken = loginAs(ctx, "Pim", "pim123");
