@@ -1,7 +1,8 @@
 import { call, getToken, setToken, getApiUrl, setApiUrl } from "./api.js";
-import { bangkokToday, bangkokTimeOfDay, bangkokHour, bangkokStamp, addDays } from "./schedule.js";
-import { indexBoot, todayModel, weekModel } from "./viewmodel.js";
+import { bangkokToday, bangkokTimeOfDay, bangkokHour, bangkokStamp, addDays, rolloverDate } from "./schedule.js";
+import { indexBoot, todayModel, weekModel, warningsForOwner, defaultOwnerId } from "./viewmodel.js";
 import { esc } from "./html.js";
+import { fmtFullDay } from "./format.js";
 import { renderShell, renderLoading } from "./views/shell.js";
 import { renderLogin } from "./views/login.js";
 import { renderConnect } from "./views/connect.js";
@@ -16,6 +17,7 @@ export const S = {
   detail: null, photo: 0, sosFor: null, pub: false, cards: null, editError: "", editBusy: false,
 };
 let toastTimer = null;
+let rolloverPending = false;
 
 export const now = () => Date.now();
 export const ctx = () => ({ me: S.boot.me, people: S.boot.people, owner: S.owner });
@@ -24,8 +26,20 @@ export const ctx = () => ({ me: S.boot.me, people: S.boot.people, owner: S.owner
 export const SCREENS = {
   today: () => {
     const t = bangkokToday(now()), nowTimeOfDay = bangkokTimeOfDay(now());
+    // Midnight rollover (I3): if the phone is still showing the day it loaded data for, but the
+    // real Bangkok day has since moved on, follow it forward and reload -- a day left open
+    // overnight must not go on quietly showing yesterday.
+    const rolled = S.boot && rolloverDate({ viewedDate: S.date, loadedToday: S.boot.today, actualToday: t });
+    if (rolled) {
+      S.date = rolled;
+      if (!rolloverPending) {
+        rolloverPending = true;
+        setTimeout(() => { rolloverPending = false; loadBoot(); }, 0);
+      }
+    }
     const model = todayModel(S.idx, { ownerId: S.owner, viewerId: S.boot.me.user_id, date: S.date, today: t, nowTimeOfDay });
-    return { tab: "today", body: renderToday({ model, week: weekModel(S.idx, S.owner, S.date, t, nowTimeOfDay), ctx: ctx(), today: t, hour: bangkokHour(now()) }) };
+    const warnings = warningsForOwner(S.boot.warnings, S.owner);
+    return { tab: "today", body: renderToday({ model, week: weekModel(S.idx, S.owner, S.date, t, nowTimeOfDay), ctx: ctx(), today: t, hour: bangkokHour(now()), warnings }) };
   },
 };
 
@@ -102,7 +116,7 @@ export async function loadBoot() {
     // previously-viewed owner lost that grant (or none was chosen yet), fall back to viewing
     // the phone's own owner.
     const canView = id => boot.people.some(p => p.user_id === id && p.medicines);
-    if (!canView(S.owner)) S.owner = boot.me.user_id;
+    if (!canView(S.owner)) S.owner = defaultOwnerId(boot.people, boot.me.user_id);
     if (!S.date || wasToday) S.date = boot.today;
     // Every active user's emergency card is visible to any logged-in family member (only the HN
     // band is gated), so the switcher just needs to still be a known person.
@@ -192,6 +206,11 @@ async function tick(key) {
     catch (e) { S.idx.ticks.set(key, existing); toast(e.message); }
     return;
   }
+  // Ticking a day other than today is easy to do by accident while browsing the week strip --
+  // ask first (I3).
+  if (date !== bangkokToday(now())) {
+    if (!confirm(`Tick for ${fmtFullDay(date)}? That isn't today.`)) return;
+  }
   const dose = currentDoseFor(prescriptionId, timeOfDay);
   S.idx.ticks.set(key, {
     prescription_id: prescriptionId, date, time_of_day: timeOfDay,
@@ -200,16 +219,18 @@ async function tick(key) {
   });
   render();
   try {
-    const row = await call("tick", { prescriptionId, date, timeOfDay });
+    // The phone always sends the doseId and amount it showed (I1) so the server can catch a
+    // Sheet edit made since this phone last loaded, instead of logging an amount nobody saw.
+    const row = await call("tick", { prescriptionId, date, timeOfDay, doseId: dose ? dose.id : "", amount: dose ? dose.amount : 0 });
     S.idx.ticks.set(key, row);
     render();
   } catch (e) {
     S.idx.ticks.delete(key);
     toast(e.message);
-    // NOT_DUE means the phone's own picture of this prescription is stale (someone changed or
-    // stopped it since this load) -- reload so Today stops offering a tick that will only fail
-    // again the same way.
-    if (e.code === "NOT_DUE") await loadBoot();
+    // NOT_DUE or CONFLICT both mean the phone's own picture of this prescription/dose is stale
+    // (someone changed, stopped, or retimed it since this load) -- reload so Today stops offering
+    // a tick that will only fail the same way again.
+    if (e.code === "NOT_DUE" || e.code === "CONFLICT") await loadBoot();
     else render();
   }
 }
@@ -218,12 +239,16 @@ async function tickAll(timeOfDay) {
   const t = bangkokToday(now()), nowTimeOfDay = bangkokTimeOfDay(now());
   const model = todayModel(S.idx, { ownerId: S.owner, viewerId: S.boot.me.user_id, date: S.date, today: t, nowTimeOfDay });
   const date = S.date;
+  if (date !== t) {
+    if (!confirm(`Tick for ${fmtFullDay(date)}? That isn't today.`)) return;
+  }
   const items = model.slots.find(s => s.timeOfDay === timeOfDay).items.filter(i => !i.tick);
   const keys = items.map(i => i.key);
-  // Send exactly the prescription ids this phone showed as due and un-ticked -- the server only
-  // ticks those, so a prescription that became due between this render and the tap (a race with
-  // someone else adding or changing one) never gets ticked without ever being shown.
-  const prescriptionIds = items.map(i => i.prescription.id);
+  // Send exactly the prescription, dose id and amount this phone showed as due and un-ticked --
+  // the server only ticks those (and only if the Sheet still agrees), so a prescription that
+  // became due, or whose dose changed, between this render and the tap never gets ticked without
+  // ever being shown (I1).
+  const items_ = items.map(i => ({ prescriptionId: i.prescription.id, doseId: i.dose.id, amount: i.dose.amount }));
   items.forEach(i => S.idx.ticks.set(i.key, {
     prescription_id: i.prescription.id, date, time_of_day: timeOfDay,
     amount_taken: String(i.dose.amount), unit: i.dose.unit,
@@ -231,7 +256,7 @@ async function tickAll(timeOfDay) {
   }));
   render();
   try {
-    const { ticked, skipped } = await call("tickAll", { date, timeOfDay, prescriptionIds });
+    const { ticked, skipped } = await call("tickAll", { date, timeOfDay, items: items_ });
     skipped.forEach(id => S.idx.ticks.delete(`${date}|${timeOfDay}|${id}`));
     ticked.forEach(row => S.idx.ticks.set(`${row.date}|${row.time_of_day}|${row.prescription_id}`, row));
     toast(`Ticked ${ticked.length} ${ticked.length === 1 ? "dose" : "doses"}.`);

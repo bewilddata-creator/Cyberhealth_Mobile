@@ -1,6 +1,6 @@
 import { esc } from "../html.js";
 import { I } from "../icons.js";
-import { fmtDay, greeting } from "../format.js";
+import { fmtDay, fmtFullDay, greeting } from "../format.js";
 import { SLOT_COLORS, thumb, ownerSwitch, medName, avatarColor, personName } from "./common.js";
 
 function ring(model) {
@@ -20,6 +20,9 @@ function countChip(s) {
   if (s.status === "none") return "";
   if (s.status === "done") return `<span class="count done">All taken</span>`;
   if (s.status === "missed") return `<span class="count miss">${s.due - s.taken} missed</span>`;
+  // Older than the loaded DoseLog window (M2): no log rows exist for this day at all, so there is
+  // truly nothing to compare against -- never call it "missed".
+  if (s.status === "unknown") return `<span class="count">Not tracked</span>`;
   return `<span class="count">${s.taken}/${s.due}${s.status === "now" ? " · now" : ""}</span>`;
 }
 
@@ -45,11 +48,19 @@ function doseRow(item, canTick) {
     ${control}</div>`;
 }
 
-export function renderToday({ model, week, ctx, today, hour }) {
+export function renderToday({ model, week, ctx, today, hour, warnings }) {
   const mine = ctx.owner === ctx.me.user_id;
   const ownerName = personName(ctx, ctx.owner);
   const head = `<div class="top"><div class="hello"><span class="av" style="background:${avatarColor(ctx.people, ctx.me.user_id)}">${esc(ctx.me.display_name.slice(0, 1))}</span>
     <div><small>${mine ? greeting(hour) : "Viewing"}</small><strong>${mine ? esc(ctx.me.display_name) : `${esc(ownerName)}'s pills`}</strong></div></div>${ownerSwitch(ctx)}</div>`;
+  // The date being viewed, spelled out in full, with a clear chip when it isn't today -- ticking
+  // a past day should never be an accident (I3).
+  const dateLine = `<div class="date-line"><strong>${esc(fmtFullDay(model.date))}</strong>${model.isToday ? "" : `<span class="chip not-today">Not today</span>`}</div>`;
+  const n = (warnings || []).length;
+  const warnBanner = n
+    ? `<button class="banner warn" data-tab="more">${n === 1 ? "1 medicine needs" : `${n} medicines need`} fixing in the Sheet, so Today may be incomplete.</button>`
+    : "";
+  const staleBanner = model.historyNotLoaded ? `<div class="banner">Older than 60 days: history not loaded.</div>` : "";
   const banner = !model.viewerIsOwner
     ? `<div class="banner">Only ${esc(ownerName)} can tick these pills. You can see what has been taken.</div>`
     : !model.canTick ? `<div class="banner">This day hasn't happened yet. You can tick on the day.</div>` : "";
@@ -64,9 +75,10 @@ export function renderToday({ model, week, ctx, today, hour }) {
     ? `<section aria-label="When needed"><div class="sec-head"><span class="dash">When needed · no reminder</span></div><div class="doses">${model.asNeeded.map(x =>
         `<div class="dose prn">${thumb(x.medicine)}<div class="info"><div class="name">${medName(x.medicine)}</div><div class="meta">${x.medicine && x.medicine.purpose ? `<span class="mini after">${esc(x.medicine.purpose)}</span>` : ""}</div></div></div>`).join("")}</div></section>`
     : "";
-  return `${head}${banner}
+  return `${head}${dateLine}${warnBanner}${banner}
     <div class="week"><button class="arr" data-shift="-7" aria-label="Previous week">‹</button>${days}<button class="arr" data-shift="7" aria-label="Next week">›</button></div>
     ${ring(model)}
     ${model.isToday ? "" : `<button class="count back-today" data-date="${today}">← Back to today</button>`}
+    ${staleBanner}
     ${slots}${prn}`;
 }

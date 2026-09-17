@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { esc, telHref } from "../js/html.js";
-import { fmtDay, fmtLong, greeting } from "../js/format.js";
+import { fmtDay, fmtFullDay, fmtLong, greeting } from "../js/format.js";
 
 test("esc escapes HTML-significant characters and blanks nullish values", () => {
   assert.equal(esc(`<img src=x onerror="a('b')">&`), "&lt;img src=x onerror=&quot;a(&#39;b&#39;)&quot;&gt;&amp;");
@@ -22,4 +22,10 @@ test("date formats and greeting", () => {
   assert.equal(fmtLong("12/01/1991"), "");
   assert.equal(fmtLong("not-a-date"), "");
   assert.deepEqual([6, 12, 17].map(greeting), ["Good morning,", "Good afternoon,", "Good evening,"]);
+});
+
+test("fmtFullDay spells out the day and month, for Today's header (I3)", () => {
+  assert.equal(fmtFullDay("2026-09-17"), "Thursday 17 September");
+  assert.equal(fmtFullDay(""), "");
+  assert.equal(fmtFullDay("not-a-date"), "");
 });

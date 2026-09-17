@@ -1,9 +1,18 @@
 const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const WD_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const MON_FULL = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 export function fmtDay(date) {
   const d = new Date(date + "T00:00:00Z");
   return `${WD[d.getUTCDay()]} ${d.getUTCDate()} ${MON[d.getUTCMonth()]}`;
+}
+// The full day name and month, e.g. "Thursday 17 September" -- Today's header, so ticking a past
+// day is never a guess about which day is even showing (I3).
+export function fmtFullDay(date) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) return "";
+  const d = new Date(date + "T00:00:00Z");
+  return `${WD_FULL[d.getUTCDay()]} ${d.getUTCDate()} ${MON_FULL[d.getUTCMonth()]}`;
 }
 export function fmtLong(date) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) return "";
