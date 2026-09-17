@@ -24,6 +24,14 @@ function cellToString_(col, value, display) {
   return String(display).trim();
 }
 
+// True when every cell of a raw values row (as returned by getValues(), before any
+// per-column formatting) is blank once trimmed. A pre-formatted template can report
+// getLastRow() far past the family's real data, and a blank row left in the middle of a
+// tab is a normal thing for an admin to do -- either way, an all-empty row is not a record.
+function blankValuesRow_(r) {
+  return r.every(v => String(v == null ? "" : v).trim() === "");
+}
+
 const SheetDb = {
   rows(tab) {
     const sh = sheet_(tab);
@@ -32,11 +40,14 @@ const SheetDb = {
     if (last < 2 || !h.length) return [];
     const range = sh.getRange(2, 1, last - 1, h.length);
     const values = range.getValues(), display = range.getDisplayValues();
-    return values.map((r, i) => {
+    const out = [];
+    values.forEach((r, i) => {
+      if (blankValuesRow_(r)) return; // _row is computed from i before this filter, so real rows keep their true number
       const o = { _row: i + 2 };
       h.forEach((k, j) => { if (k) o[k] = cellToString_(k, r[j], display[i][j]); });
-      return o;
+      out.push(o);
     });
+    return out;
   },
   append(tab, obj) {
     const sh = sheet_(tab);
@@ -53,13 +64,16 @@ const SheetDb = {
   update(tab, keyCol, keyVal, patch) {
     const sh = sheet_(tab);
     const h = headers_(sh);
-    const found = SheetDb.rows(tab).find(x => x[keyCol] === keyVal);
-    if (!found) return false;
-    Object.keys(patch).forEach(k => {
+    // Validate every key before writing any of them, the same way append() does -- otherwise
+    // a patch with one bad key part-way through would leave the row half updated.
+    const columns = Object.keys(patch).map(k => {
       const j = h.indexOf(k);
       if (j < 0) throw new AppError("SERVER", `The ${tab} tab is missing the "${k}" column.`);
-      sh.getRange(found._row, j + 1).setNumberFormat("@").setValue(String(patch[k]));
+      return [k, j];
     });
+    const found = SheetDb.rows(tab).find(x => x[keyCol] === keyVal);
+    if (!found) return false;
+    columns.forEach(([k, j]) => { sh.getRange(found._row, j + 1).setNumberFormat("@").setValue(String(patch[k])); });
     return true;
   },
   remove(tab, pred) {

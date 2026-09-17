@@ -125,6 +125,59 @@ test("Data.gs SheetDb.append and .update throw on a field whose column does not 
   );
 });
 
+test("SheetDb.rows() skips rows past the real data even when a tab's getLastRow() is padded, like a pre-formatted template", () => {
+  const context = loadGs();
+  const tables = fixtureTables();
+  // scripts/make_template_v2.py pre-formats rows 2..1000 of every tab; simulate a Sheet whose
+  // Medicines getLastRow() reports 1000 even though only 5 rows are real data.
+  context.SpreadsheetApp = fakeSpreadsheetApp(tables, tables.__columns, { Medicines: 1000 });
+  const rows = JSON.parse(JSON.stringify(vm.runInContext('SheetDb.rows("Medicines")', context)));
+  assert.equal(rows.length, 5, "padding must not turn into ~995 blank medicines");
+  assert.deepEqual(rows.map(r => r._row), [2, 3, 4, 5, 6]);
+  assert.ok(rows.every(r => r.generic_name), "no blank medicine slipped through");
+});
+
+test("SheetDb.rows() skips a blank row in the middle of a tab, and later rows keep their true _row", () => {
+  const context = loadGs();
+  const tables = fixtureTables();
+  const blank = Object.fromEntries(tables.__columns.Medicines.map(c => [c, ""]));
+  tables.Medicines = [tables.Medicines[0], tables.Medicines[1], blank, tables.Medicines[2], tables.Medicines[3], tables.Medicines[4]];
+  context.SpreadsheetApp = fakeSpreadsheetApp(tables);
+  const rows = JSON.parse(JSON.stringify(vm.runInContext('SheetDb.rows("Medicines")', context)));
+  assert.deepEqual(rows.map(r => r.medicine_id), ["MED01", "MED02", "MED03", "MED04", "MED05"]);
+  assert.deepEqual(rows.map(r => r._row), [2, 3, 5, 6, 7], "the blank row at sheet row 4 is skipped, not renumbered away");
+});
+
+test("SheetDb.update() validates every key before writing any, so a patch with one unknown key changes nothing", () => {
+  const context = loadGs();
+  const tables = fixtureTables();
+  context.SpreadsheetApp = fakeSpreadsheetApp(tables);
+  assert.throws(
+    () => vm.runInContext('SheetDb.update("Users", "user_id", "U01", { display_name: "Should not stick", not_a_real_column: "x" })', context),
+    /not_a_real_column/,
+  );
+  const rows = JSON.parse(JSON.stringify(vm.runInContext('SheetDb.rows("Users")', context)));
+  const dad = rows.find(r => r.user_id === "U01");
+  assert.equal(dad.display_name, "Dad", "the valid key must not have been written before the unknown key was found");
+});
+
+test("doPost returns the SERVER busy error as JSON when the script lock is unavailable", () => {
+  const context = loadGs();
+  context.PropertiesService = fakePropertiesService();
+  context.CacheService = fakeCacheService();
+  context.LockService = { getScriptLock: () => ({ tryLock: () => false, releaseLock: () => {} }) };
+  context.Utilities = fakeUtilities;
+  context.ContentService = fakeContentService;
+  context.SpreadsheetApp = fakeSpreadsheetApp(fixtureTables());
+
+  const doPost = context.doPost;
+  const call = body => JSON.parse(doPost({ postData: { contents: JSON.stringify(body) } }).getContent());
+
+  // setPassword takes ctx.lock() around its write to Users.
+  const result = call({ action: "setPassword", name: "Top", code: "123456", newPassword: "123456" });
+  assert.deepEqual(result, { ok: false, error: { code: "SERVER", message: "The app is busy. Try again in a moment." } });
+});
+
 test("full doPost round trip: listUsers, setPassword, login, bootstrap, tick", () => {
   const context = loadGs();
   context.PropertiesService = fakePropertiesService();

@@ -44,6 +44,19 @@ test("update refuses an unknown column on an empty tab, using __columns", () => 
   });
 });
 
+test("rows() skips a blank spacer row and later rows keep their true _row (same rule as SheetDb.rows() in apps-script/Data.gs)", () => {
+  const db = memoryDb({
+    Medicines: [
+      { medicine_id: "MED01", generic_name: "Amlodipine" },
+      { medicine_id: "", generic_name: "" },
+      { medicine_id: "MED02", generic_name: "Metformin" },
+    ],
+  });
+  const rows = db.rows("Medicines");
+  assert.deepEqual(rows.map(r => r.medicine_id), ["MED01", "MED02"]);
+  assert.deepEqual(rows.map(r => r._row), [2, 4], "the blank row at index 1 (_row 3) is skipped, not renumbered away");
+});
+
 test("sharingRows returns trimmed owner/shared_with/section/access rows from the fixtures", () => {
   const ctx = fakeCtx(fixtureTables());
   assert.deepEqual(sharingRows(ctx), [

@@ -16,9 +16,16 @@ export function memoryDb(tables) {
       if (!cols.includes(k)) throw new Error(`The ${tab} tab has no "${k}" column.`);
     });
   };
+  // A row whose fields are all blank once trimmed is a spacer, not a record -- same rule as
+  // SheetDb.rows() in apps-script/Data.gs, so the Node tests and the real Sheet agree.
+  const isBlankRow = r => Object.keys(r).every(k => k === "_row" || String(r[k] == null ? "" : r[k]).trim() === "");
   return {
     tables: t,
-    rows(tab) { return need(tab).map((r, i) => ({ ...r, _row: i + 2 })); },
+    rows(tab) {
+      return need(tab)
+        .map((r, i) => ({ ...r, _row: i + 2 })) // _row is computed before the blank filter, so real rows keep their true number
+        .filter(r => !isBlankRow(r));
+    },
     append(tab, obj) {
       checkColumns(tab, obj);
       need(tab).push({ ...obj });

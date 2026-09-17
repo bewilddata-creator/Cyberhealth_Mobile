@@ -36,7 +36,13 @@ class FakeRange {
 }
 
 class FakeSheet {
-  constructor(columns, rows) { this.grid = buildGrid(columns, rows); }
+  // padToRow: total sheet rows (header included) to report via getLastRow(), when it's more
+  // than the real data -- simulating a template pre-formatted hundreds of rows down, the way
+  // scripts/make_template_v2.py leaves rows 2..1000 blank but "used".
+  constructor(columns, rows, padToRow) {
+    this.grid = buildGrid(columns, rows);
+    while (padToRow && this.grid.length < padToRow) this.grid.push(new Array(columns.length).fill(""));
+  }
   getLastColumn() { return this.grid[0].length; }
   getLastRow() { return this.grid.length; }
   getRange(row, col, numRows, numCols) {
@@ -49,10 +55,13 @@ class FakeSheet {
 // tables: plain-object rows keyed by tab name (fixtures.js's fixtureTables(), minus __columns).
 // columnsByTab: header order for each tab -- normally tables.__columns, but a test can pass a
 // variant (e.g. with one column removed) to simulate a broken Sheet.
-export function fakeSpreadsheetApp(tables, columnsByTab) {
+// padRowsByTab: { [tab]: totalRowsIncludingHeader } -- makes that tab's getLastRow() report
+// more than the real data, padded with blank rows, to simulate a pre-formatted template tab.
+export function fakeSpreadsheetApp(tables, columnsByTab, padRowsByTab) {
   const cols = columnsByTab || tables.__columns || {};
+  const pad = padRowsByTab || {};
   const sheets = new Map();
-  Object.keys(cols).forEach(tab => sheets.set(tab, new FakeSheet(cols[tab], tables[tab] || [])));
+  Object.keys(cols).forEach(tab => sheets.set(tab, new FakeSheet(cols[tab], tables[tab] || [], pad[tab])));
   return {
     getActive: () => ({
       getSheetByName: name => sheets.get(name) || null,
