@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { isAllowedApiUrl, apiUrlFromLocation } from "../js/apiurl.js";
 
-const REAL = "https://script.google.com/macros/s/AKfycbzEKzIVau9DyIaNWpm8gukTW/exec";
+const REAL = "https://script.google.com/macros/s/AKfyEXAMPLEexampleEXAMPLEexam/exec";
 
 test("only an Apps Script /exec address, or mock, is allowed", () => {
   assert.equal(isAllowedApiUrl(REAL), true);

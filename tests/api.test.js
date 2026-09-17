@@ -14,7 +14,7 @@ function fakeStorage() {
   };
 }
 
-const REAL = "https://script.google.com/macros/s/AKfycbzEKzIVau9DyIaNWpm8gukTW/exec";
+const REAL = "https://script.google.com/macros/s/AKfyEXAMPLEexampleEXAMPLEexam/exec";
 
 test("adoptApiUrlFromLocation saves the address but never calls history.replaceState", () => {
   globalThis.localStorage = fakeStorage();
