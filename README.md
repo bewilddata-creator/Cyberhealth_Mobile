@@ -36,9 +36,11 @@ There are three things you'll end up with:
 6. Every other tab has one or two **grey, italic example rows** at the top —
    sample data so you can see the shape of a real row. Delete every grey
    example row once you understand it (right-click the row number → Delete
-   row). The exception is the **Settings** tab's `photo_folder_id` row —
-   that one is real, not an example; leave it as is (photo storage isn't
-   used until release 2, but the value is already correct).
+   row). Two exceptions: the **Settings** tab's `photo_folder_id` row is
+   real, not an example — leave it as is (photo storage isn't used until
+   release 2, but the value is already correct); and **DoseLog** has no
+   example rows at all — it starts empty and fills in automatically as
+   doses are ticked in the app, so there's nothing to delete there.
 7. Fill in your family's real data, tab by tab. A few things matter more
    than others:
    - **Users** — one row per person who will use the app. `user_id` is a
@@ -69,13 +71,33 @@ There are three things you'll end up with:
 8. When you think it's complete, leave the Sheet open — you'll run a
    checker against it in Part 2 before trusting it.
 
+### Changing a medicine later
+
+Once the app is live, a medicine change is always an edit to an existing
+row, never a delete-and-retype — the app (and the medicine's history)
+assumes an id, once used, always means the same prescription:
+
+- **Dose amount changed?** Edit the `amount` on that dose's row in
+  **PrescriptionDoses** in place — same `dose_id`, same `prescription_id`.
+- **Medicine stopped?** Set that row's `status` in **Prescriptions** to
+  `Stopped`. Never delete the row, and never add a second `Prescriptions`
+  row for the same person and medicine — the app can't tell that apart
+  from a mistake, and will show the pill twice and warn about it.
+- Either way, add a line to **PrescriptionChanges** describing what
+  changed and why — it's what shows in the app's medicine history — then
+  run `checkSheet` again to make sure nothing broke.
+
 ## Part 2 — Add the Apps Script
 
 Apps Script is Google's way of running code against your Sheet. You're
 going to paste in the code from this project's `apps-script/` folder.
 
 1. In your Sheet, go to **Extensions → Apps Script**. It opens a new tab
-   with a code editor and one file already in it, `Code.gs`.
+   with a code editor and one file already in it, `Code.gs`. Rename the
+   project now (click "Untitled project" at the top and type
+   "CyberHealth") — do this **before** you first click Run in step 4, so
+   the permission screen Google shows you asks to run "CyberHealth", not
+   "Untitled project".
 2. **Paste in the manifest first.** Click the gear icon (**Project
    Settings**) in the left sidebar, and tick **"Show `appsscript.json`
    manifest file in editor"**. Go back to the editor (`<>` icon), click on
@@ -94,8 +116,6 @@ going to paste in the code from this project's `apps-script/` folder.
      }
    }
    ```
-
-   (Change `"Asia/Bangkok"` if your family isn't in Thailand.)
 
 3. **Paste in the eight code files.** In this project's `apps-script/`
    folder there are eight `.gs` files: `Access.gs`, `Actions.gs`,
@@ -179,25 +199,31 @@ Share it the way you'd share a password, not the way you'd share a photo.
 ## Part 5 — Put the app on each iPhone
 
 Do this once per phone, in **Safari** (not Chrome — only Safari's "Add to
-Home Screen" gives the full-screen, offline-capable app used here):
+Home Screen" gives the full-screen, offline-capable app used here), and
+**in this exact order**. iOS gives a home-screen icon its own separate
+storage from Safari — logging in inside Safari first does **not** carry
+over to the icon, so if you log in before adding the icon, you'll just
+have to log in again from the icon anyway:
 
-1. Open the private link from Part 4.
-2. The first time on a phone, this shows **"Who's using the app?"** with
+1. Open the private link from Part 4 in Safari. Don't log in yet.
+2. Tap the **Share** icon (the square with an arrow pointing up), scroll
+   down, and tap **Add to Home Screen**. Confirm the name ("CyberHealth")
+   and tap **Add**.
+3. Open the app **from its new icon** on the home screen — not from
+   Safari.
+4. Now, from the icon, log in: this shows **"Who's using the app?"** with
    everyone's name as a button. Tap your name.
    - **First time ever:** tap **"Set or forgot password"**, enter the
      6-digit `reset_code` the family admin put in your `Users` row, choose
      a password (at least 6 characters), and tap **"Save password and log
      in."**
    - **Already have a password:** just type it and tap **Log in**.
-3. Once logged in, tap the **Share** icon in Safari (the square with an
-   arrow pointing up), scroll down, and tap **Add to Home Screen**. Confirm
-   the name ("CyberHealth") and tap **Add**.
-4. From now on, open the app from its icon on the home screen, not from
-   Safari — it opens full-screen, without the address bar, and keeps
-   working (for screens already loaded) even with no signal.
 
-You only need to do steps 1–3 once. The connection is remembered on that
-phone, and the login stays signed in for about 6 months.
+You only need to do steps 1–4 once. The connection is remembered on that
+phone, and the login stays signed in for about 6 months. From now on,
+always open the app from its home-screen icon, not from Safari — it opens
+full-screen, without the address bar. The app opens even with no signal,
+but it needs a connection to load your pills.
 
 ### If the link doesn't carry the address across
 
@@ -268,7 +294,7 @@ and make sure the tests are green and there's no uncommitted drift in
 
 - Login per person, with password reset via a 6-digit code the family
   admin sets in the Sheet.
-- Today screen: this week's schedule, ticking doses as taken or skipped.
+- Today screen: this week's schedule, ticking doses as taken.
 - Viewing the medicine library, each person's prescriptions and dose
   history.
 - Viewing doctors, hospitals and each person's care team.
