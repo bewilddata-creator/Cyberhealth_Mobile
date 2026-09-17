@@ -1,0 +1,6 @@
+.DS_Store
+node_modules/
+~$*.xlsx
+Images/
+.api-url.txt
+.superpowers/
