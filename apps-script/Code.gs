@@ -1,4 +1,7 @@
+/** @OnlyCurrentDoc */
 // Web app entry points. Deploy: Deploy > New deployment > Web app, execute as Me, access Anyone.
+// @OnlyCurrentDoc scopes the authorization Google asks for to this one spreadsheet, instead of
+// every Sheet in the family admin's Drive.
 function doPost(e) {
   let req;
   try {
