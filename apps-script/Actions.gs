@@ -139,9 +139,12 @@ function buildCards(ctx, prescriptions, viewerUserId, sharing) {
     const existing = cardsByUser.get(u.user_id) || {};
     const card = { user_id: u.user_id, display_name: u.display_name };
     CARD_FIELDS.forEach(f => { card[f] = str(existing[f]); });
-    card.current_medicines = prescriptions
-      .filter(p => p.userId === u.user_id && p.status === "Active" && p.freq !== FREQ.AS_NEEDED)
-      .map(p => medicineLabel(medicinesById.get(p.medicineId)));
+    // A duplicate Active prescription for the same medicine (see C2) must not list the medicine
+    // twice on the emergency card either -- collapsed to the first by prescription order, same
+    // rule schedule.js applies for Today/Meds.
+    card.current_medicines = dedupeActivePrescriptions(
+      prescriptions.filter(p => p.userId === u.user_id && p.status === "Active" && p.freq !== FREQ.AS_NEEDED),
+    ).map(p => medicineLabel(medicinesById.get(p.medicineId)));
     if (canRead(viewerUserId, u.user_id, SECTIONS.CARE_TEAM, sharing)) {
       card.hospital_numbers = hnRows.filter(h => h.user_id === u.user_id).map(h => {
         const hos = hospitalsById.get(h.hospital_id) || {};

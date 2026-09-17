@@ -120,6 +120,27 @@ test("normalizePrescription REJECTS weekdays with any unknown token, naming the 
   assert.match(r.reason, /Wendesday/);
 });
 
+test("normalizePrescription accepts a day name typed longer or in a different case, as long as it's a real prefix", () => {
+  assert.deepEqual(rx({ frequency: "Weekdays", weekdays: "Monday Thursday" }).days, ["Mon", "Thu"]);
+  assert.deepEqual(rx({ frequency: "Weekdays", weekdays: "mond, THU" }).days, ["Mon", "Thu"]);
+  assert.deepEqual(rx({ frequency: "Weekdays", weekdays: "Mon, Thu," }).days, ["Mon", "Thu"]);
+});
+
+test("normalizePrescription REJECTS a run of days joined by anything but a comma or space (Mon-Fri, Mon;Thu, Mon/Wed/Fri) -- these must never quietly become due only on Monday", () => {
+  for (const bad of ["Mon-Fri", "Mon;Thu", "Mon/Wed/Fri"]) {
+    const r = normalizePrescription(rxRow({ frequency: "Weekdays", weekdays: bad }));
+    assert.equal(r.ok, false, `"${bad}" must be rejected, not silently read as "Mon"`);
+    assert.match(r.reason, /unknown day/);
+    assert.ok(r.reason.includes(bad), `reason should name the token "${bad}": ${r.reason}`);
+    assert.match(r.reason, /separate days with commas/);
+  }
+});
+
+test("normalizePrescription REJECTS a token under 3 letters or that isn't a real day prefix at all", () => {
+  assert.match(normalizePrescription(rxRow({ frequency: "Weekdays", weekdays: "Tu" })).reason, /unknown day "Tu"/);
+  assert.match(normalizePrescription(rxRow({ frequency: "Weekdays", weekdays: "boxed" })).reason, /unknown day "boxed"/);
+});
+
 test("normalizePrescription rejects a bad status", () => {
   assert.match(normalizePrescription(rxRow({ status: "Paused" })).reason, /status/);
   assert.match(normalizePrescription(rxRow({ status: "" })).reason, /status/);

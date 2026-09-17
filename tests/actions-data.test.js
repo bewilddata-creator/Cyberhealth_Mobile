@@ -34,6 +34,20 @@ test("publicEmergency: every active user's card, no login, no hospital_numbers k
   assert.deepEqual(top.current_medicines, []);
 });
 
+test("publicEmergency: a duplicate Active prescription for the same medicine is collapsed in current_medicines, same as Today/Meds", () => {
+  const ctx = fakeCtx();
+  ctx.db.tables.Prescriptions.push({
+    prescription_id: "RX98", user_id: "U01", medicine_id: "MED01", frequency: "Daily", every_n_days: "",
+    weekdays: "", count_from: "", meal_timing: "Any time", doctor_id: "", status: "Active",
+    started_on: "2026-01-01", notes: "", created_at: "", created_by: "", updated_at: "", updated_by: "",
+  });
+  const r = handle({ action: "publicEmergency" }, ctx);
+  const dad = r.data.find(c => c.user_id === "U01");
+  // RX98 duplicates RX01 (both Active, U01, MED01) -- Amlodipine must still appear once, first by
+  // prescription order, not twice.
+  assert.deepEqual(dad.current_medicines, ["Amlodipine 5 mg", "Metformin 500 mg", "Epoetin alfa 4,000 IU"]);
+});
+
 // ---- bootstrap ----
 
 test("Dad's bootstrap: grants, visible prescriptions/doses/HN/care-team, complete libraries, cards, no secrets", () => {

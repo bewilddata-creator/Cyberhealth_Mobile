@@ -47,8 +47,20 @@ export function bangkokTimeOfDay(nowMs) { return timeOfDayAtHour(bangkokHour(now
 
 const MEAL_TIMINGS = ["Before meal", "After meal", "With meal", "Any time"];
 
-function normalizeWeekdayToken(w) {
-  return w.slice(0, 1).toUpperCase() + w.slice(1, 3).toLowerCase();
+const WEEKDAY_FULL_NAMES = { Mon: "monday", Tue: "tuesday", Wed: "wednesday", Thu: "thursday", Fri: "friday", Sat: "saturday", Sun: "sunday" };
+
+// A token counts as a day name only if it is at least three letters AND is itself a prefix of a
+// real day name ("Mon", "mond", "Monday", "THU" all match) -- NOT just "first three letters match
+// a day", which used to accept "Mon-Fri" as one token and silently read it as "Mon" alone (a
+// medicine meant to run Monday-Friday would then only ever be due on Mondays, with nothing in the
+// Sheet to say so). Returns the canonical 3-letter code, or null.
+function weekdayForToken(token) {
+  const t = String(token).trim().toLowerCase();
+  if (t.length < 3) return null;
+  for (const code of WEEKDAYS) {
+    if (WEEKDAY_FULL_NAMES[code].startsWith(t)) return code;
+  }
+  return null;
 }
 function splitWeekdayTokens(value) {
   return String(value == null ? "" : value).split(/[\s,]+/).filter(Boolean);
@@ -88,11 +100,12 @@ export function normalizePrescription(row) {
     if (tokens.length === 0) return fail("weekdays needs day names like Mon,Wed,Fri");
     // A hand-typed weekday list is rejected outright on the first bad token (naming it) rather
     // than silently dropping it -- a typo like "Wendesday" used to mean "never due on Wednesday"
-    // with no warning at all.
+    // with no warning at all, and "Mon-Fri" (or "Mon;Thu", "Mon/Wed/Fri") used to be misread as
+    // the single day "Mon" -- silently due only on Mondays.
     for (const t of tokens) {
-      const norm = normalizeWeekdayToken(t);
-      if (!WEEKDAYS.includes(norm)) return fail(`weekdays has an unknown day "${t}"`);
-      if (!days.includes(norm)) days.push(norm);
+      const code = weekdayForToken(t);
+      if (!code) return fail(`weekdays has an unknown day "${t}" — separate days with commas, like "Mon, Wed, Fri"`);
+      if (!days.includes(code)) days.push(code);
     }
   }
 
