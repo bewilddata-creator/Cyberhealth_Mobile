@@ -3,8 +3,12 @@
 
 export const SECTIONS = { MEDICINES: "Medicines", CARE_TEAM: "Care team" };
 
+function toId(id) {
+  return id == null ? "" : String(id).trim();
+}
+
 export function isActiveUser(u) {
-  return !!u && !!String(u.user_id || "").trim() && String(u.active || "").trim().toUpperCase() !== "FALSE";
+  return !!u && !!toId(u.user_id) && String(u.active || "").trim().toUpperCase() !== "FALSE";
 }
 
 export function publicUser(u) {
@@ -12,15 +16,16 @@ export function publicUser(u) {
 }
 
 export function grantFor(viewerId, ownerId, section, sharing) {
-  const viewer = String(viewerId || "").trim();
-  const owner = String(ownerId || "").trim();
+  const viewer = toId(viewerId);
+  const owner = toId(ownerId);
   if (!viewer || !owner) return "";
   if (viewer === owner) return "Edit";
   let best = "";
   (sharing || []).forEach(r => {
-    if (String(r.owner_user_id || "").trim() !== owner) return;
+    if (!r) return;
+    if (toId(r.owner_user_id) !== owner) return;
     if (String(r.section || "").trim() !== section) return;
-    const sharedWith = String(r.shared_with_user_id || "").trim();
+    const sharedWith = toId(r.shared_with_user_id);
     if (sharedWith && sharedWith !== viewer) return;
     const access = String(r.access || "").trim();
     if (access !== "View" && access !== "Edit") return;
@@ -43,7 +48,7 @@ export function readableOwners(viewerId, userIds, section, sharing) {
 }
 
 export function canTick(viewerId, ownerId) {
-  const viewer = String(viewerId || "").trim();
-  const owner = String(ownerId || "").trim();
+  const viewer = toId(viewerId);
+  const owner = toId(ownerId);
   return !!viewer && viewer === owner;
 }

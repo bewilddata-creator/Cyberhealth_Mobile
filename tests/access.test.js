@@ -85,6 +85,21 @@ test("canTick is the owner alone, and requires a non-blank id", () => {
   assert.equal(canTick("U01", ""), false);
 });
 
+test("malformed entries in the sharing array are skipped, not thrown on", () => {
+  const validEdit = { owner_user_id: "U01", shared_with_user_id: "U02", section: "Medicines", access: "Edit" };
+  assert.doesNotThrow(() => grantFor("U02", "U01", SECTIONS.MEDICINES, [null, undefined, validEdit]));
+  assert.equal(grantFor("U02", "U01", SECTIONS.MEDICINES, [null, undefined, validEdit]), "Edit");
+  assert.doesNotThrow(() => grantFor("U02", "U01", SECTIONS.MEDICINES, [null]));
+  assert.equal(grantFor("U02", "U01", SECTIONS.MEDICINES, [null]), "");
+});
+
+test("numeric ids are not treated as blank", () => {
+  assert.equal(grantFor(0, 0, SECTIONS.MEDICINES, []), "Edit");
+  assert.equal(canTick(0, 0), true);
+  const rows = [{ owner_user_id: 1, shared_with_user_id: 0, section: "Medicines", access: "View" }];
+  assert.equal(grantFor(0, 1, SECTIONS.MEDICINES, rows), "View");
+});
+
 test("isActiveUser and publicUser", () => {
   assert.equal(isActiveUser({ user_id: "U01", active: "TRUE" }), true);
   assert.equal(isActiveUser({ user_id: "U01", active: "" }), true);
