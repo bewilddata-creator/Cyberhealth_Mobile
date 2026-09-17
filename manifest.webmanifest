@@ -1,7 +1,6 @@
 {
   "name": "CyberHealth",
   "short_name": "CyberHealth",
-  "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "background_color": "#FBF4E9",

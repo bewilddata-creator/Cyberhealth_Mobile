@@ -35,14 +35,16 @@ export function setApiUrl(url) {
   try { localStorage.setItem(API_KEY, String(url).trim()); } catch (e) { /* storage blocked */ }
   return true;
 }
-// Takes the address out of a private link like …/#api=<url>, saves it, and tidies the address bar.
+// Takes the address out of a private link like …/#api=<url> and saves it. Deliberately leaves the
+// address bar alone: an iOS "Add to Home Screen" icon reopens exactly the page URL it was added
+// from (manifest.webmanifest has no start_url, on purpose), #api=... included -- stripping it here
+// would strip it from the icon forever, since a home-screen web app may not share Safari's
+// storage at all (see README Part 5 / C1).
 export function adoptApiUrlFromLocation(loc) {
   const where = loc || (typeof location === "undefined" ? null : location);
   if (!where) return false;
   const found = apiUrlFromLocation(where.hash, where.search, where.protocol === "https:");
-  if (!found || !setApiUrl(found)) return false;
-  try { history.replaceState(null, "", where.pathname); } catch (e) { /* older browser */ }
-  return true;
+  return !!found && setApiUrl(found);
 }
 
 export async function call(action, payload = {}) {

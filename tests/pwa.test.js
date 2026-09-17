@@ -28,6 +28,14 @@ test("manifest points at existing icons and opens standalone", () => {
   assert.match(readFileSync("index.html", "utf8"), /src="js\/main\.js"/);
 });
 
+// C1: no start_url means iOS uses the page URL the icon was added from as the start URL --
+// #api=... included -- instead of always reopening "./" with no address at all.
+test("manifest has no start_url, so an iOS home-screen icon reopens the exact page URL (with #api=...)", () => {
+  const manifest = JSON.parse(readFileSync("manifest.webmanifest", "utf8"));
+  assert.ok(!("start_url" in manifest));
+  assert.ok("scope" in manifest);
+});
+
 // The manifest and the service worker are useless unless the page actually links/registers
 // them -- this is what makes "Add to Home Screen" and offline caching work at all.
 test("index.html links the manifest and the apple touch icon", () => {
