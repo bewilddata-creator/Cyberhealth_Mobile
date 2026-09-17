@@ -13,6 +13,7 @@ const REFRESH_AFTER_MS = 5 * 60 * 1000;
 export const S = {
   screen: "loading", boot: null, idx: null, owner: null, date: null,
   users: [], pick: null, reset: false, error: "", busy: false, toast: "", loadedAt: 0,
+  detail: null, photo: 0, sosFor: null, pub: false, cards: null, editError: "", editBusy: false,
 };
 let toastTimer = null;
 
@@ -32,13 +33,16 @@ function view() {
   if (S.screen === "loading") return renderLoading();
   if (S.screen === "connect") return renderConnect({ error: S.error, busy: S.busy });
   if (S.screen === "login") return renderLogin({ users: S.users, pick: S.pick, reset: S.reset, error: S.error, busy: S.busy });
+  // Public mode has its own no-login screen with no bottom navigation, reached from the login
+  // screen's "Emergency card" button -- it never wraps its body in renderShell.
+  if (S.pub) return `<main class="scroll public">${SCREENS.sos ? SCREENS.sos().body : ""}</main>`;
   if (!S.boot) return renderLoading();
   const { body, tab } = (SCREENS[S.screen] || SCREENS.today)();
   return renderShell({ body, tab });
 }
 
 export function render() {
-  const key = `${S.screen}:${S.reset}`;
+  const key = `${S.screen}:${S.pub}:${S.reset}`;
   const same = root.dataset.view === key;
   const scroller = root.querySelector(".scroll, .login");
   const y = same && scroller ? scroller.scrollTop : 0;
@@ -72,7 +76,7 @@ export function go(screen) {
 
 async function showLogin(message = "") {
   if (!getApiUrl()) return showConnect();
-  Object.assign(S, { screen: "login", error: message, busy: false });
+  Object.assign(S, { screen: "login", pub: false, cards: null, error: message, busy: false });
   render();
   try {
     S.users = await call("listUsers");
@@ -97,6 +101,9 @@ export async function loadBoot() {
     const canView = id => boot.people.some(p => p.user_id === id && p.medicines);
     if (!canView(S.owner)) S.owner = boot.me.user_id;
     if (!S.date || wasToday) S.date = boot.today;
+    // Every active user's emergency card is visible to any logged-in family member (only the HN
+    // band is gated), so the switcher just needs to still be a known person.
+    if (!boot.people.some(p => p.user_id === S.sosFor)) S.sosFor = boot.me.user_id;
     if (S.screen === "loading" || S.screen === "login") S.screen = "today";
     if (boot.warnings.length) console.warn("Sheet problems:", boot.warnings);
     if (S.toast === "Refreshing…") S.toast = "";
@@ -129,8 +136,32 @@ const pickedName = () => (S.users.find(u => u.user_id === S.pick) || {}).display
 async function logout() {
   try { await call("logout"); } catch (e) { /* the session may already be gone */ }
   setToken(null);
-  Object.assign(S, { boot: null, idx: null, owner: null, date: null });
+  Object.assign(S, { boot: null, idx: null, owner: null, date: null, sosFor: null, pub: false, cards: null });
   showLogin();
+}
+
+async function openPublic() {
+  Object.assign(S, { pub: true, screen: "sos", cards: null, sosFor: null });
+  render();
+  try {
+    S.cards = await call("publicEmergency");
+    S.sosFor = S.cards[0] ? S.cards[0].user_id : null;
+    render();
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+async function saveEmergencyCard(fields) {
+  S.editBusy = true; S.editError = ""; render();
+  try {
+    const card = await call("saveEmergencyCard", { fields });
+    S.boot.emergency = S.boot.emergency.map(c => (c.user_id === card.user_id ? card : c));
+    Object.assign(S, { editBusy: false, screen: "sos" });
+    toast("Emergency card saved.");
+  } catch (e) {
+    S.editBusy = false; S.editError = e.message; render();
+  }
 }
 
 function currentDoseFor(prescriptionId, timeOfDay) {
@@ -208,7 +239,7 @@ async function tickAll(timeOfDay) {
 }
 
 root.addEventListener("click", e => {
-  const el = e.target.closest("[data-tab],[data-date],[data-shift],[data-pick],[data-reset],[data-tick],[data-tickall],[data-logout],[data-refresh]");
+  const el = e.target.closest("[data-tab],[data-date],[data-shift],[data-pick],[data-reset],[data-tick],[data-tickall],[data-logout],[data-refresh],[data-open],[data-back],[data-photo],[data-public],[data-sosfor],[data-edit-sos]");
   if (!el || !root.contains(el)) return;
   const d = el.dataset;
   if (d.tab) return d.tab === "login" ? showLogin() : go(d.tab);
@@ -220,6 +251,12 @@ root.addEventListener("click", e => {
   if (d.tickall) return tickAll(d.tickall);
   if ("logout" in d) return logout();
   if ("refresh" in d) return loadBoot();
+  if (d.open) { Object.assign(S, { detail: d.open, photo: 0 }); return go("detail"); }
+  if ("back" in d) return go("meds");
+  if (d.photo) { S.photo = Number(d.photo); return render(); }
+  if ("public" in d) return openPublic();
+  if (d.sosfor) { S.sosFor = d.sosfor; return render(); }
+  if ("editSos" in d) { S.editError = ""; return go("emergencyEdit"); }
 });
 
 root.addEventListener("change", e => {
@@ -235,6 +272,7 @@ root.addEventListener("submit", e => {
   if (form.dataset.form === "connect") return connect(f.apiUrl);
   if (form.dataset.form === "login") return authWith("login", { name: pickedName(), password: f.password });
   if (form.dataset.form === "setPassword") return authWith("setPassword", { name: pickedName(), code: f.code, newPassword: f.newPassword });
+  if (form.dataset.form === "saveEmergency") return saveEmergencyCard(f);
 });
 
 document.addEventListener("visibilitychange", () => {

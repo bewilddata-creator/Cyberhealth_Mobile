@@ -19,6 +19,19 @@ export function thumb(med) {
     ? `<span class="thumb"><img src="${esc(url)}" alt="" loading="lazy" referrerpolicy="no-referrer"></span>`
     : `<span class="thumb" aria-hidden="true">${I.meds}</span>`;
 }
+function doctorInitials(name) {
+  const cleaned = String(name || "").replace(/^dr\.?\s*/i, "").trim();
+  const parts = cleaned.split(/\s+/).filter(Boolean);
+  return parts.slice(0, 2).map(w => w[0].toUpperCase()).join("");
+}
+// A doctor's photo, or their initials when there is none (a family sample Sheet has no photos,
+// so this is what most doctors show in practice).
+export function doctorThumb(doctor, url) {
+  const src = url || (doctor ? driveImageUrl(doctor.photo) : "");
+  if (src) return `<span class="thumb"><img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer"></span>`;
+  const initials = doctor ? doctorInitials(doctor.name) : "";
+  return `<span class="thumb" aria-hidden="true">${initials ? esc(initials) : I.team}</span>`;
+}
 export function medName(med) {
   return med ? `${esc(med.generic_name)} <em>${esc(med.strength)}</em>` : "Unknown medicine";
 }

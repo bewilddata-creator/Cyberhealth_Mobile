@@ -1,0 +1,14 @@
+<!doctype html>
+<html>
+<body style="margin:0;width:512px;height:512px;background:#F5B8DB;display:grid;place-items:center;overflow:hidden">
+  <svg width="360" height="360" viewBox="0 0 100 100"><path id="star" fill="#171512"/><path d="M50 30v40M30 50h40" stroke="#F5B8DB" stroke-width="12" stroke-linecap="round"/></svg>
+  <script>
+    let d = "";
+    for (let i = 0; i < 20; i++) {
+      const r = i % 2 ? 40 : 50, a = Math.PI * i / 10 - Math.PI / 2;
+      d += (i ? "L" : "M") + (50 + r * Math.cos(a)).toFixed(1) + " " + (50 + r * Math.sin(a)).toFixed(1);
+    }
+    document.getElementById("star").setAttribute("d", d + "Z");
+  </script>
+</body>
+</html>

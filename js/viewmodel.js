@@ -1,5 +1,5 @@
 // Pure screen models built from bootstrap data. No DOM.
-import { TIMES_OF_DAY, FREQ, WEEKDAYS, weekdayOf, addDays, doseItemsOn, slotStatus, countsOnDay } from "./schedule.js";
+import { TIMES_OF_DAY, FREQ, WEEKDAYS, weekdayOf, addDays, doseItemsOn, slotStatus, countsOnDay, describeFrequency, describeDoses } from "./schedule.js";
 import { resolveMockPhoto } from "./mockphoto.js";
 
 export function driveImageUrl(link) {
@@ -113,4 +113,135 @@ export function weekModel(idx, ownerId, date, today, nowTimeOfDay) {
     const d = addDays(monday, i);
     return { date: d, weekday: weekdayOf(d), day: Number(d.slice(8)), result: dayResult(idx, ownerId, d, today, nowTimeOfDay) };
   });
+}
+
+// ---- Meds, medicine detail, Doctors, Emergency (Task 8) ----
+
+const PHOTO_FIELDS = [
+  ["photo_box", "Box"],
+  ["photo_packet_front", "Packet front"],
+  ["photo_packet_back", "Packet back"],
+  ["photo_pill_front", "Pill front"],
+  ["photo_pill_back", "Pill back"],
+];
+
+function isFlagActive(v) {
+  return String(v == null ? "" : v).trim().toUpperCase() === "TRUE";
+}
+
+function prescriptionDoses(idx, prescriptionId) {
+  const doses = idx.dosesByPrescription.get(prescriptionId) || [];
+  return TIMES_OF_DAY.map(t => doses.find(d => d.timeOfDay === t)).filter(Boolean);
+}
+
+// The owner's CareTeam row for a doctor: prefers an active row, but falls back to any row so a
+// prescription written against a since-deactivated care-team entry still shows a hospital.
+function careTeamRowFor(idx, ownerId, doctorId) {
+  const rows = (idx.boot.care_team || []).filter(c => c.user_id === ownerId && c.doctor_id === doctorId);
+  return rows.find(c => isFlagActive(c.active)) || rows[0] || null;
+}
+
+function hnFor(idx, userId, hospitalId) {
+  const row = (idx.boot.hospital_numbers || []).find(h => h.user_id === userId && h.hospital_id === hospitalId);
+  return row ? row.hn : "";
+}
+
+function splitSemi(text) {
+  return String(text == null ? "" : text).split(";").map(s => s.trim()).filter(Boolean);
+}
+
+export function parseAllergies(text) {
+  return splitSemi(text).map(s => {
+    const m = s.match(/^(.*?)\s*\((.*)\)\s*$/);
+    return m ? { what: m[1], reaction: m[2] } : { what: s, reaction: "" };
+  });
+}
+
+export function ageOn(dob, today) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dob == null ? "" : dob))) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(today == null ? "" : today))) return null;
+  let age = Number(today.slice(0, 4)) - Number(dob.slice(0, 4));
+  if (today.slice(5) < dob.slice(5)) age--;
+  return age;
+}
+
+export function medsModel(idx, ownerId) {
+  const prescriptions = ownerPrescriptions(idx, ownerId);
+  const active = prescriptions.filter(p => p.status === "Active").map(p => {
+    const medicine = idx.medicines.get(p.medicineId) || null;
+    const doses = prescriptionDoses(idx, p.id);
+    const summary = `${describeFrequency(p)} · ${describeDoses(doses)}`;
+    return { prescription: p, medicine, doses, summary };
+  });
+  const stopped = prescriptions.filter(p => p.status === "Stopped").map(p => {
+    const medicine = idx.medicines.get(p.medicineId) || null;
+    const stops = (idx.changesByPrescription.get(p.id) || []).filter(c => c.change_type === "Stopped");
+    const latest = stops.reduce((a, c) => (c.changed_at > a ? c.changed_at : a), "");
+    return { prescription: p, medicine, stoppedOn: latest.slice(0, 10) };
+  });
+  return { active, stopped };
+}
+
+// Read-only medicine detail, scoped to the owner: a prescription belonging to someone else (or
+// unknown entirely) returns null rather than leaking another person's medicine or history.
+export function detailModel(idx, ownerId, prescriptionId) {
+  const p = idx.prescriptions.get(prescriptionId);
+  if (!p || p.userId !== ownerId) return null;
+  const medicine = idx.medicines.get(p.medicineId) || null;
+  const doses = prescriptionDoses(idx, prescriptionId);
+  const photos = PHOTO_FIELDS.map(([field, label]) => ({ label, url: medicine ? driveImageUrl(medicine[field]) : "" }));
+  const doctor = p.doctorId ? idx.doctors.get(p.doctorId) || null : null;
+  const ct = doctor ? careTeamRowFor(idx, ownerId, p.doctorId) : null;
+  const hospital = ct ? idx.hospitals.get(ct.hospital_id) || null : null;
+  const hn = ct ? hnFor(idx, ownerId, ct.hospital_id) : "";
+  const history = (idx.changesByPrescription.get(prescriptionId) || [])
+    .slice()
+    .sort((a, b) => (a.changed_at < b.changed_at ? 1 : a.changed_at > b.changed_at ? -1 : 0))
+    .map(c => ({
+      changedAt: c.changed_at,
+      changeType: c.change_type,
+      changedByName: (idx.people.get(c.changed_by) || {}).display_name || "",
+      doctorName: c.doctor_id ? (idx.doctors.get(c.doctor_id) || {}).name || "" : "",
+      reason: c.reason,
+      before: c.before,
+      after: c.after,
+    }));
+  return { prescription: p, medicine, doses, photos, doctor, hospital, hn, history };
+}
+
+// The owner's active care team, sorted by doctor name. Scoped to the owner: only CareTeam rows
+// for ownerId are ever considered.
+export function doctorsModel(idx, ownerId) {
+  const rows = (idx.boot.care_team || []).filter(c => c.user_id === ownerId && isFlagActive(c.active));
+  return rows
+    .map(careTeam => {
+      const doctor = idx.doctors.get(careTeam.doctor_id) || null;
+      const hospital = idx.hospitals.get(careTeam.hospital_id) || null;
+      const hn = hnFor(idx, ownerId, careTeam.hospital_id);
+      const photoUrl = doctor ? driveImageUrl(doctor.photo) : "";
+      const otherHospitals = (idx.boot.doctor_hospitals || [])
+        .filter(dh => dh.doctor_id === careTeam.doctor_id && dh.hospital_id !== careTeam.hospital_id)
+        .map(dh => (idx.hospitals.get(dh.hospital_id) || {}).name)
+        .filter(Boolean);
+      return { careTeam, doctor, hospital, hn, photoUrl, otherHospitals };
+    })
+    .sort((a, b) => {
+      const an = a.doctor ? a.doctor.name : "", bn = b.doctor ? b.doctor.name : "";
+      return an < bn ? -1 : an > bn ? 1 : 0;
+    });
+}
+
+// boot is either a real bootstrap payload ({emergency, today, ...}) or, for the no-login public
+// flow, the minimal {emergency: <publicEmergency cards>, today} shape -- both carry everything
+// this needs. A card only ever carries hospital_numbers when the server decided this viewer may
+// see it (see server/actions.js buildCards), so that alone gates the HN band.
+export function emergencyModel(boot, userId) {
+  const card = ((boot && boot.emergency) || []).find(c => c.user_id === userId);
+  if (!card) return null;
+  return {
+    ...card,
+    allergies: parseAllergies(card.allergies),
+    conditions: splitSemi(card.conditions),
+    age: ageOn(card.date_of_birth, boot.today),
+  };
 }
