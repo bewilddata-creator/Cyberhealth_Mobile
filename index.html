@@ -2,19 +2,20 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="CyberHealth">
+  <meta name="theme-color" content="#FBF4E9">
   <title>CyberHealth</title>
-  <style>
-    body{margin:0;min-height:100vh;display:grid;place-items:center;background:#FBF4E9;color:#171512;font-family:-apple-system,"Segoe UI",system-ui,sans-serif;padding:24px;box-sizing:border-box}
-    main{max-width:28rem;text-align:center}
-    h1{font-size:2rem;margin:0 0 .5rem}
-    p{color:#5E574C;line-height:1.5;margin:0}
-  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <main>
-    <h1>CyberHealth</h1>
-    <p>The app is being rebuilt. It will be back here soon.</p>
-  </main>
+  <div id="app"><div class="loading" role="status"><span class="spinner"></span>Loading…</div></div>
+  <script type="module" src="js/main.js"></script>
 </body>
 </html>

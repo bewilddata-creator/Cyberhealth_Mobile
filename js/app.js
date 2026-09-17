@@ -1,0 +1,268 @@
+import { call, getToken, setToken, getApiUrl, setApiUrl } from "./api.js";
+import { bangkokToday, bangkokTimeOfDay, bangkokHour, bangkokStamp, addDays } from "./schedule.js";
+import { indexBoot, todayModel, weekModel } from "./viewmodel.js";
+import { esc } from "./html.js";
+import { renderShell, renderLoading } from "./views/shell.js";
+import { renderLogin } from "./views/login.js";
+import { renderConnect } from "./views/connect.js";
+import { renderToday } from "./views/today.js";
+
+const root = document.getElementById("app");
+const REFRESH_AFTER_MS = 5 * 60 * 1000;
+
+export const S = {
+  screen: "loading", boot: null, idx: null, owner: null, date: null,
+  users: [], pick: null, reset: false, error: "", busy: false, toast: "", loadedAt: 0,
+};
+let toastTimer = null;
+
+export const now = () => Date.now();
+export const ctx = () => ({ me: S.boot.me, people: S.boot.people, owner: S.owner });
+
+// Screen registry: name -> () => ({ body, tab }). Task 8 registers the other screens.
+export const SCREENS = {
+  today: () => {
+    const t = bangkokToday(now()), nowTimeOfDay = bangkokTimeOfDay(now());
+    const model = todayModel(S.idx, { ownerId: S.owner, viewerId: S.boot.me.user_id, date: S.date, today: t, nowTimeOfDay });
+    return { tab: "today", body: renderToday({ model, week: weekModel(S.idx, S.owner, S.date, t, nowTimeOfDay), ctx: ctx(), today: t, hour: bangkokHour(now()) }) };
+  },
+};
+
+function view() {
+  if (S.screen === "loading") return renderLoading();
+  if (S.screen === "connect") return renderConnect({ error: S.error, busy: S.busy });
+  if (S.screen === "login") return renderLogin({ users: S.users, pick: S.pick, reset: S.reset, error: S.error, busy: S.busy });
+  if (!S.boot) return renderLoading();
+  const { body, tab } = (SCREENS[S.screen] || SCREENS.today)();
+  return renderShell({ body, tab });
+}
+
+export function render() {
+  const key = `${S.screen}:${S.reset}`;
+  const same = root.dataset.view === key;
+  const scroller = root.querySelector(".scroll, .login");
+  const y = same && scroller ? scroller.scrollTop : 0;
+  const values = {};
+  if (same) root.querySelectorAll("input[id], textarea[id]").forEach(el => { values[el.id] = el.value; });
+  // A live-filtering field would re-render on every keystroke; without this it would lose focus
+  // -- and so the phone's keyboard -- after each character.
+  const active = same && document.activeElement && root.contains(document.activeElement) ? document.activeElement.id : "";
+  root.dataset.view = key;
+  root.innerHTML = view() + (S.toast ? `<div class="toast" role="status">${esc(S.toast)}</div>` : "");
+  Object.entries(values).forEach(([id, v]) => { const el = document.getElementById(id); if (el) el.value = v; });
+  if (active) {
+    const el = document.getElementById(active);
+    if (el) { el.focus({ preventScroll: true }); if (el.setSelectionRange && el.value) { try { el.setSelectionRange(el.value.length, el.value.length); } catch (e) { /* not a text-selectable input */ } } }
+  }
+  const next = root.querySelector(".scroll, .login");
+  if (next) next.scrollTop = y;
+}
+
+export function toast(message) {
+  S.toast = message;
+  render();
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { S.toast = ""; render(); }, 4000);
+}
+
+export function go(screen) {
+  S.screen = screen;
+  render();
+}
+
+async function showLogin(message = "") {
+  if (!getApiUrl()) return showConnect();
+  Object.assign(S, { screen: "login", error: message, busy: false });
+  render();
+  try {
+    S.users = await call("listUsers");
+    if (!S.users.some(u => u.user_id === S.pick)) S.pick = S.users[0] ? S.users[0].user_id : null;
+  } catch (e) {
+    S.error = e.message;
+  }
+  render();
+}
+
+export async function loadBoot() {
+  if (S.boot) toast("Refreshing…");
+  try {
+    const boot = await call("bootstrap");
+    const wasToday = S.boot && S.date === S.boot.today;
+    S.boot = boot;
+    S.idx = indexBoot(boot);
+    S.loadedAt = now();
+    // The owner switcher only ever offers people whose Medicines this viewer can read; if the
+    // previously-viewed owner lost that grant (or none was chosen yet), fall back to viewing
+    // the phone's own owner.
+    const canView = id => boot.people.some(p => p.user_id === id && p.medicines);
+    if (!canView(S.owner)) S.owner = boot.me.user_id;
+    if (!S.date || wasToday) S.date = boot.today;
+    if (S.screen === "loading" || S.screen === "login") S.screen = "today";
+    if (boot.warnings.length) console.warn("Sheet problems:", boot.warnings);
+    if (S.toast === "Refreshing…") S.toast = "";
+    render();
+  } catch (e) {
+    if (e.code === "AUTH_REQUIRED" || (e.code === "CONFIG" && !S.boot)) {
+      S.boot = null;
+      return showLogin(e.code === "CONFIG" ? e.message : "Please log in again.");
+    }
+    if (!S.boot) return showLogin(e.message);
+    toast(e.message);
+  }
+}
+
+async function authWith(action, payload) {
+  S.busy = true; S.error = ""; render();
+  try {
+    const { token } = await call(action, payload);
+    setToken(token);
+    Object.assign(S, { reset: false, busy: false, screen: "loading" });
+    render();
+    await loadBoot();
+  } catch (e) {
+    S.busy = false; S.error = e.message; render();
+  }
+}
+
+const pickedName = () => (S.users.find(u => u.user_id === S.pick) || {}).display_name || "";
+
+async function logout() {
+  try { await call("logout"); } catch (e) { /* the session may already be gone */ }
+  setToken(null);
+  Object.assign(S, { boot: null, idx: null, owner: null, date: null });
+  showLogin();
+}
+
+function currentDoseFor(prescriptionId, timeOfDay) {
+  const doses = S.idx.dosesByPrescription.get(prescriptionId) || [];
+  return doses.find(d => d.timeOfDay === timeOfDay) || null;
+}
+function prescriptionName(prescriptionId) {
+  const p = S.idx.prescriptions.get(prescriptionId);
+  const m = p && S.idx.medicines.get(p.medicineId);
+  return m ? m.generic_name : "this medicine";
+}
+
+async function tick(key) {
+  const [date, timeOfDay, prescriptionId] = key.split("|");
+  const existing = S.idx.ticks.get(key);
+  if (existing) {
+    if (!confirm(`Untick ${prescriptionName(prescriptionId)}?`)) return;
+    S.idx.ticks.delete(key);
+    render();
+    try { await call("untick", { prescriptionId, date, timeOfDay }); }
+    catch (e) { S.idx.ticks.set(key, existing); toast(e.message); }
+    return;
+  }
+  const dose = currentDoseFor(prescriptionId, timeOfDay);
+  S.idx.ticks.set(key, {
+    prescription_id: prescriptionId, date, time_of_day: timeOfDay,
+    amount_taken: dose ? String(dose.amount) : "", unit: dose ? dose.unit : "",
+    status: "Taken", taken_at: bangkokStamp(now()), taken_by: S.boot.me.user_id,
+  });
+  render();
+  try {
+    const row = await call("tick", { prescriptionId, date, timeOfDay });
+    S.idx.ticks.set(key, row);
+    render();
+  } catch (e) {
+    S.idx.ticks.delete(key);
+    toast(e.message);
+    // NOT_DUE means the phone's own picture of this prescription is stale (someone changed or
+    // stopped it since this load) -- reload so Today stops offering a tick that will only fail
+    // again the same way.
+    if (e.code === "NOT_DUE") await loadBoot();
+    else render();
+  }
+}
+
+async function tickAll(timeOfDay) {
+  const t = bangkokToday(now()), nowTimeOfDay = bangkokTimeOfDay(now());
+  const model = todayModel(S.idx, { ownerId: S.owner, viewerId: S.boot.me.user_id, date: S.date, today: t, nowTimeOfDay });
+  const date = S.date;
+  const items = model.slots.find(s => s.timeOfDay === timeOfDay).items.filter(i => !i.tick);
+  const keys = items.map(i => i.key);
+  // Send exactly the prescription ids this phone showed as due and un-ticked -- the server only
+  // ticks those, so a prescription that became due between this render and the tap (a race with
+  // someone else adding or changing one) never gets ticked without ever being shown.
+  const prescriptionIds = items.map(i => i.prescription.id);
+  items.forEach(i => S.idx.ticks.set(i.key, {
+    prescription_id: i.prescription.id, date, time_of_day: timeOfDay,
+    amount_taken: String(i.dose.amount), unit: i.dose.unit,
+    status: "Taken", taken_at: bangkokStamp(now()), taken_by: S.boot.me.user_id,
+  }));
+  render();
+  try {
+    const { ticked, skipped } = await call("tickAll", { date, timeOfDay, prescriptionIds });
+    skipped.forEach(id => S.idx.ticks.delete(`${date}|${timeOfDay}|${id}`));
+    ticked.forEach(row => S.idx.ticks.set(`${row.date}|${row.time_of_day}|${row.prescription_id}`, row));
+    toast(`Ticked ${ticked.length} ${ticked.length === 1 ? "dose" : "doses"}.`);
+    // A skip means the phone's picture of this section was stale -- reload so it stops offering
+    // a tick-all that will only skip the same ids again.
+    if (skipped.length) await loadBoot();
+    else render();
+  } catch (e) {
+    keys.forEach(k => S.idx.ticks.delete(k));
+    toast(e.message);
+  }
+}
+
+root.addEventListener("click", e => {
+  const el = e.target.closest("[data-tab],[data-date],[data-shift],[data-pick],[data-reset],[data-tick],[data-tickall],[data-logout],[data-refresh]");
+  if (!el || !root.contains(el)) return;
+  const d = el.dataset;
+  if (d.tab) return d.tab === "login" ? showLogin() : go(d.tab);
+  if (d.date) { S.date = d.date; return render(); }
+  if (d.shift) { S.date = addDays(S.date, Number(d.shift)); return render(); }
+  if (d.pick) { Object.assign(S, { pick: d.pick, error: "" }); return render(); }
+  if ("reset" in d) { Object.assign(S, { reset: !S.reset, error: "" }); return render(); }
+  if (d.tick) return tick(d.tick);
+  if (d.tickall) return tickAll(d.tickall);
+  if ("logout" in d) return logout();
+  if ("refresh" in d) return loadBoot();
+});
+
+root.addEventListener("change", e => {
+  const el = e.target;
+  if (el.matches("[data-owner]")) { S.owner = el.value; return render(); }
+});
+
+root.addEventListener("submit", e => {
+  const form = e.target.closest("form[data-form]");
+  if (!form) return;
+  e.preventDefault();
+  const f = Object.fromEntries(new FormData(form));
+  if (form.dataset.form === "connect") return connect(f.apiUrl);
+  if (form.dataset.form === "login") return authWith("login", { name: pickedName(), password: f.password });
+  if (form.dataset.form === "setPassword") return authWith("setPassword", { name: pickedName(), code: f.code, newPassword: f.newPassword });
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible" || !S.boot) return;
+  if (now() - S.loadedAt > REFRESH_AFTER_MS) loadBoot();
+  else render();
+});
+setInterval(() => { if (S.screen === "today" && S.boot && document.visibilityState === "visible") render(); }, 60000);
+
+function showConnect(message = "") {
+  Object.assign(S, { screen: "connect", error: message, busy: false });
+  render();
+}
+
+function connect(url) {
+  if (!setApiUrl(url)) {
+    S.error = "That doesn't look like an Apps Script address. It should end in /exec.";
+    return render();
+  }
+  S.error = "";
+  showLogin();
+}
+
+export async function start() {
+  if (!getApiUrl()) return showConnect();
+  if (getToken()) {
+    await loadBoot();
+    if (S.boot) return;
+  }
+  if (S.screen !== "login") showLogin();
+}
