@@ -42,6 +42,8 @@ export function timeOfDayAtHour(hour) {
 }
 export function bangkokTimeOfDay(nowMs) { return timeOfDayAtHour(bangkokHour(nowMs)); }
 
+const MEAL_TIMINGS = ["Before meal", "After meal", "With meal", "Any time"];
+
 function parseWeekdayList(value) {
   return String(value == null ? "" : value).split(/[\s,]+/).filter(Boolean)
     .map(w => w.slice(0, 1).toUpperCase() + w.slice(1, 3).toLowerCase())
@@ -64,6 +66,8 @@ export function normalizePrescription(row) {
   if (!startedOn) return fail("started_on must be YYYY-MM-DD");
   const status = String(row.status || "").trim();
   if (status !== "Active" && status !== "Stopped") return fail("status must be Active or Stopped");
+  const mealRaw = String(row.meal_timing || "").trim();
+  if (mealRaw && !MEAL_TIMINGS.includes(mealRaw)) return fail(`unknown meal_timing "${mealRaw}"`);
 
   let n = 0;
   let countFrom = "";
@@ -84,7 +88,7 @@ export function normalizePrescription(row) {
     ok: true,
     prescription: {
       id, userId, medicineId, freq, n, days, countFrom,
-      meal: String(row.meal_timing || "").trim() || "Any time",
+      meal: mealRaw || "Any time",
       doctorId: String(row.doctor_id || "").trim(),
       status, startedOn,
       notes: String(row.notes || "").trim(),
@@ -125,13 +129,20 @@ export function doseKey(date, timeOfDay, prescriptionId) { return `${date}|${tim
 export function doseItemsOn(prescriptions, doses, date) {
   const byId = new Map(prescriptions.map(p => [p.id, p]));
   const due = new Set(prescriptions.filter(p => isDue(p, date)).map(p => p.id));
+  const seenKeys = new Set();
+  const seenDoseIds = new Set();
   const out = [];
   TIMES_OF_DAY.forEach(timeOfDay => {
     doses.forEach(d => {
       if (d.timeOfDay !== timeOfDay) return;
+      if (seenDoseIds.has(d.id)) return; // the same dose row appearing twice in the input
       const prescription = byId.get(d.prescriptionId);
       if (!prescription || !due.has(prescription.id)) return;
-      out.push({ key: doseKey(date, timeOfDay, prescription.id), date, timeOfDay, prescription, dose: d });
+      const key = doseKey(date, timeOfDay, prescription.id);
+      if (seenKeys.has(key)) return; // two dose rows for the same prescription + time of day: keep the first
+      seenKeys.add(key);
+      seenDoseIds.add(d.id);
+      out.push({ key, date, timeOfDay, prescription, dose: d });
     });
   });
   return out;
@@ -182,7 +193,7 @@ export function describeFrequency(prescription) {
 
 function pluralUnit(unit, amount) {
   if (Number(amount) === 1) return unit;
-  if (unit === "ml") return unit;
+  if (unit === "ml" || unit === "other") return unit;
   if (/(s|x|z|ch|sh)$/.test(unit)) return `${unit}es`;
   return `${unit}s`;
 }

@@ -123,6 +123,13 @@ test("normalizePrescription carries the id through on failure", () => {
   assert.equal(normalizePrescription(rxRow({ frequency: "Sometimes" })).id, "RX1");
 });
 
+test("normalizePrescription rejects a meal_timing outside the four allowed values", () => {
+  assert.match(normalizePrescription(rxRow({ meal_timing: "Snack" })).reason, /meal_timing/);
+  assert.equal(rx({ meal_timing: "Before meal" }).meal, "Before meal");
+  assert.equal(rx({ meal_timing: "With meal" }).meal, "With meal");
+  assert.equal(rx({ meal_timing: "" }).meal, "Any time");
+});
+
 // ---- normalizeDose ----
 
 test("normalizeDose reads a valid row", () => {
@@ -227,6 +234,24 @@ test("doseItemsOn: dose rows of an unknown prescription are ignored", () => {
   assert.deepEqual(doseItemsOn([p], doses, "2026-09-15"), []);
 });
 
+test("doseItemsOn: the same dose row appearing twice in the input produces one item", () => {
+  const p = rx({ prescription_id: "RX1" });
+  const d = dose({ dose_id: "D1", prescription_id: "RX1", time_of_day: "Morning", amount: "1" });
+  const items = doseItemsOn([p], [d, d], "2026-09-15");
+  assert.equal(items.length, 1);
+  assert.equal(items[0].key, "2026-09-15|Morning|RX1");
+});
+
+test("doseItemsOn: two different dose rows for the same prescription and time of day keep only the first", () => {
+  const p = rx({ prescription_id: "RX1" });
+  const first = dose({ dose_id: "D1", prescription_id: "RX1", time_of_day: "Morning", amount: "1" });
+  const second = dose({ dose_id: "D2", prescription_id: "RX1", time_of_day: "Morning", amount: "2" });
+  const items = doseItemsOn([p], [first, second], "2026-09-15");
+  assert.equal(items.length, 1);
+  assert.equal(items[0].dose.id, "D1");
+  assert.equal(items[0].dose.amount, 1);
+});
+
 // ---- slotStatus ----
 
 test("slotStatus", () => {
@@ -281,4 +306,24 @@ test("describeDoses", () => {
   ];
   assert.equal(describeDoses(doses), "Morning 1 tablet · Evening 2 tablets");
   assert.equal(describeDoses([]), "When needed");
+});
+
+test("describeDoses pluralizes every Unit value from the Lists tab correctly", () => {
+  const expected = {
+    tablet: ["1 tablet", "2 tablets"],
+    capsule: ["1 capsule", "2 capsules"],
+    ml: ["1 ml", "2 ml"],
+    unit: ["1 unit", "2 units"],
+    injection: ["1 injection", "2 injections"],
+    puff: ["1 puff", "2 puffs"],
+    drop: ["1 drop", "2 drops"],
+    patch: ["1 patch", "2 patches"],
+    other: ["1 other", "2 other"],
+  };
+  Object.entries(expected).forEach(([unit, [one, two]]) => {
+    const d1 = dose({ dose_id: "D1", time_of_day: "Morning", amount: "1", unit });
+    const d2 = dose({ dose_id: "D2", time_of_day: "Morning", amount: "2", unit });
+    assert.equal(describeDoses([d1]), `Morning ${one}`);
+    assert.equal(describeDoses([d2]), `Morning ${two}`);
+  });
 });
