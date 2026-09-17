@@ -27,3 +27,17 @@ test("manifest points at existing icons and opens standalone", () => {
   assert.ok(existsSync("icons/icon-180.png"));
   assert.match(readFileSync("index.html", "utf8"), /src="js\/main\.js"/);
 });
+
+// The manifest and the service worker are useless unless the page actually links/registers
+// them -- this is what makes "Add to Home Screen" and offline caching work at all.
+test("index.html links the manifest and the apple touch icon", () => {
+  const html = readFileSync("index.html", "utf8");
+  assert.match(html, /<link rel="manifest" href="manifest\.webmanifest">/);
+  assert.match(html, /<link rel="apple-touch-icon" href="icons\/icon-180\.png">/);
+});
+
+test("js/main.js registers the service worker", () => {
+  const src = readFileSync("js/main.js", "utf8");
+  assert.match(src, /serviceWorker/);
+  assert.match(src, /\.register\(\s*["']sw\.js["']\s*\)/);
+});

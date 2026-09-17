@@ -170,7 +170,9 @@ export function medsModel(idx, ownerId) {
   const active = prescriptions.filter(p => p.status === "Active").map(p => {
     const medicine = idx.medicines.get(p.medicineId) || null;
     const doses = prescriptionDoses(idx, p.id);
-    const summary = `${describeFrequency(p)} · ${describeDoses(doses)}`;
+    // An As-needed prescription has no dose rows, so describeDoses would only repeat
+    // "When needed" a second time -- describeFrequency alone already says that.
+    const summary = doses.length ? `${describeFrequency(p)} · ${describeDoses(doses)}` : describeFrequency(p);
     return { prescription: p, medicine, doses, summary };
   });
   const stopped = prescriptions.filter(p => p.status === "Stopped").map(p => {

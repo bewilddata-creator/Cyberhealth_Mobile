@@ -18,6 +18,13 @@ export function fakeSha256(bytes) {
   return out;
 }
 
+// Release 1 has no fake Drive photos (that's release 2's photo upload feature) -- js/api.js
+// always wires this in as the mock backend's photo resolver, so it must exist and just says
+// "no photo" for every reference rather than leaving js/mockphoto.js's resolver undefined.
+export function mockPhotoUrl(ref) {
+  return "";
+}
+
 let tables = null;
 const sessions = new Map();
 const attempts = new Map();

@@ -84,6 +84,13 @@ test("a card with hospital_numbers shows the HN band; one without does not", () 
   assert.ok(!withoutHn.includes("0045821"));
 });
 
+test("a hospital number row with a blank hn shows a dash, never a bare 'HN'", () => {
+  const blankHn = { ...publicModel, hospital_numbers: [{ hospital_name: "Riverside", hn: "", phone: "" }] };
+  const html = renderEmergency({ cards: [blankHn], model: blankHn, ctx: { me: { user_id: "U02" } }, publicMode: false });
+  assert.ok(!html.includes("HN "), "must not render a bare 'HN ' with nothing after it");
+  assert.ok(html.includes("Riverside"));
+});
+
 test("renderEmergencyEdit escapes field values and only posts whitelisted fields", () => {
   const card = { full_name: "<script>y</script>", date_of_birth: "", blood_type: "", allergies: "", conditions: "", contact1_name: "", contact1_relation: "", contact1_phone: "", contact2_name: "", contact2_relation: "", contact2_phone: "", notes: "" };
   const html = renderEmergencyEdit({ card, error: "", busy: false });
@@ -95,7 +102,7 @@ test("renderEmergencyEdit escapes field values and only posts whitelisted fields
 test("renderMore lists Sheet problems and coming-soon rows", () => {
   const html = renderMore({ me: { display_name: "Dad" }, warnings: ["Prescriptions row RX99: missing user_id"] });
   assert.ok(html.includes("missing user_id"));
-  assert.ok(html.toLowerCase().includes("coming soon") || html.toLowerCase().includes("soon"));
+  assert.ok(html.includes("Coming soon"));
   assert.ok(html.includes("data-logout"));
   assert.ok(html.includes("data-refresh"));
 });

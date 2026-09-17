@@ -34,7 +34,7 @@ export function renderEmergency({ cards, model, ctx, publicMode }) {
     .map(n => ({ name: model[`contact${n}_name`], rel: model[`contact${n}_relation`], phone: model[`contact${n}_phone`] }))
     .filter(c => c.name || c.phone);
   const hnBand = !publicMode && model.hospital_numbers && model.hospital_numbers.length
-    ? `<div class="card"><span class="dash">Hospitals</span><dl class="kv">${model.hospital_numbers.map(h => `<dt>${esc(h.hospital_name)}</dt><dd class="num">HN ${esc(h.hn)}</dd>`).join("")}</dl></div>`
+    ? `<div class="card"><span class="dash">Hospitals</span><dl class="kv">${model.hospital_numbers.map(h => `<dt>${esc(h.hospital_name)}</dt><dd class="num">${h.hn ? `HN ${esc(h.hn)}` : "–"}</dd>`).join("")}</dl></div>`
     : "";
   return `${top}${chips}
     <div class="sos-hero"><div class="blood"><svg viewBox="0 0 100 100" aria-hidden="true"><path d="${starPath(12, 50, 40)}"/></svg><div><small>Blood</small><b>${esc(model.blood_type || "?")}</b></div></div>

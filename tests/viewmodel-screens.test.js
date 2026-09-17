@@ -29,6 +29,17 @@ test("medsModel for Dad: 4 active including As needed, 1 stopped with its date",
   assert.equal(rx01.summary, "Every day · Morning 2 tablets");
 });
 
+test("medsModel: an As-needed prescription with no dose rows doesn't repeat itself in the summary", () => {
+  const ctx = fakeCtx();
+  const { boot } = bootAs(ctx, "Dad", "dad123");
+  const idx = indexBoot(boot);
+  const model = medsModel(idx, "U01");
+  const rx04 = model.active.find(x => x.prescription.id === "RX04");
+  assert.ok(rx04);
+  assert.equal(rx04.doses.length, 0);
+  assert.equal(rx04.summary, "When needed");
+});
+
 test("detailModel for Dad's RX01: doses, doctor, hospital, HN, history newest first", () => {
   const ctx = fakeCtx();
   const { boot } = bootAs(ctx, "Dad", "dad123");
@@ -87,6 +98,9 @@ test("doctorsModel scoped to the owner: Pim's care team never includes Dad's row
   assert.equal(rows.length, 1);
   assert.equal(rows[0].doctor.doctor_id, "DOC01");
   assert.equal(rows[0].hospital.hospital_id, "HOS02");
+  // Pim sees Dr. Somchai at Northgate (HOS02), but her HospitalNumbers row is at Riverside
+  // (HOS01) -- this must read "", never her Riverside HN or Dad's Northgate HN (26-11873).
+  assert.equal(rows[0].hn, "");
 });
 
 test("emergencyModel parses allergies, conditions and age", () => {

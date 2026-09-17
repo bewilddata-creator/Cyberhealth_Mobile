@@ -76,7 +76,10 @@ export function go(screen) {
 
 async function showLogin(message = "") {
   if (!getApiUrl()) return showConnect();
-  Object.assign(S, { screen: "login", pub: false, cards: null, error: message, busy: false });
+  // A toast from whatever was happening before (a refresh, a save, an error) must never survive
+  // onto the login screen -- it isn't about whoever logs in next.
+  clearTimeout(toastTimer);
+  Object.assign(S, { screen: "login", pub: false, cards: null, toast: "", error: message, busy: false });
   render();
   try {
     S.users = await call("listUsers");
@@ -136,12 +139,16 @@ const pickedName = () => (S.users.find(u => u.user_id === S.pick) || {}).display
 async function logout() {
   try { await call("logout"); } catch (e) { /* the session may already be gone */ }
   setToken(null);
-  Object.assign(S, { boot: null, idx: null, owner: null, date: null, sosFor: null, pub: false, cards: null });
+  clearTimeout(toastTimer);
+  Object.assign(S, { boot: null, idx: null, owner: null, date: null, sosFor: null, pub: false, cards: null, toast: "" });
   showLogin();
 }
 
 async function openPublic() {
-  Object.assign(S, { pub: true, screen: "sos", cards: null, sosFor: null });
+  // The public card is reached straight from the login screen (never mid-session), so any
+  // leftover toast from a previous logged-in session must not show through onto it.
+  clearTimeout(toastTimer);
+  Object.assign(S, { pub: true, screen: "sos", cards: null, sosFor: null, toast: "" });
   render();
   try {
     S.cards = await call("publicEmergency");

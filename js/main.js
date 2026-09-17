@@ -27,5 +27,11 @@ Object.assign(SCREENS, {
   more: () => ({ tab: "more", body: renderMore({ me: S.boot.me, warnings: S.boot.warnings }) }),
 });
 
+// https-only: localhost/http development never registers the worker, so it never caches a stale
+// build behind a developer's back.
+if ("serviceWorker" in navigator && location.protocol === "https:") {
+  addEventListener("load", () => navigator.serviceWorker.register("sw.js"));
+}
+
 adoptApiUrlFromLocation();
 start();
