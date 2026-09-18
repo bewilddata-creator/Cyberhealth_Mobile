@@ -112,12 +112,38 @@ going to paste in the code from this project's `apps-script/` folder.
      "dependencies": {},
      "exceptionLogging": "STACKDRIVER",
      "runtimeVersion": "V8",
+     "oauthScopes": [
+       "https://www.googleapis.com/auth/spreadsheets.currentonly",
+       "https://www.googleapis.com/auth/drive"
+     ],
      "webapp": {
        "executeAs": "USER_DEPLOYING",
        "access": "ANYONE_ANONYMOUS"
      }
    }
    ```
+
+   The `oauthScopes` list is what Google will ask your permission for in
+   step 4, and it is spelled out on purpose rather than left for Google to
+   guess from the code. Two things, and nothing else:
+
+   - **`spreadsheets.currentonly`** — "See, edit, create, and delete only
+     the specific Google Sheets file you use this app with." **This one
+     Sheet only.** Not your other spreadsheets.
+   - **`drive`** — "See, edit, create, and delete all of your Google Drive
+     files." This is for the medicine and pill photos. The app opens the
+     one photo folder whose ID you put in the `Settings` tab, makes a
+     subfolder per medicine, and puts the photos there. **Google has no
+     narrower permission that can open a folder you made by hand**, so this
+     is the smallest option that works — the app itself touches nothing
+     else in your Drive, but the permission you are granting is wider than
+     what it uses. If you would rather not grant it, you can skip photos:
+     everything else in the app works without it, and only the photo
+     buttons will fail.
+
+   Because these are written down here, the script asks for exactly this
+   and nothing more — a later release that needs something new has to say
+   so in this list, where you can see it.
 
 3. **Paste in the eleven code files.** In this project's `apps-script/`
    folder there are eleven `.gs` files: `Access.gs`, `Actions.gs`,
@@ -144,12 +170,11 @@ going to paste in the code from this project's `apps-script/` folder.
      **Review permissions**, choose your Google account, and if you see a
      screen saying "Google hasn't verified this app," click **Advanced**,
      then **Go to CyberHealth (unsafe)** — this is normal for a script only
-     you and your family run — and **Allow**. This is also the step that
-     grants the app access to a folder in your Google Drive, for medicine
-     and doctor photos — say yes here, in the editor, even if you don't
-     plan to add a photo right away. If you skip this and only authorize it
-     later, from a deployment, the very first photo anyone tries to add
-     will fail.
+     you and your family run — and **Allow**. The screen will list the two
+     permissions from step 2: the one Sheets file, and Google Drive. Say
+     yes here, in the editor, even if you don't plan to add a photo right
+     away. If you skip this and only authorize it later, from a deployment,
+     the very first photo anyone tries to add will fail.
    - Once it runs, open **Execution log** at the bottom (it usually opens
      automatically). `checkSheet` never changes your Sheet — it only reads
      it and reports problems.
@@ -176,22 +201,87 @@ going to paste in the code from this project's `apps-script/` folder.
    Sheet through the app, so treat it like a password (more on that in Part
    4).
 
+### Upgrading to a new release
+
 **When you edit the code later** (a new release of this project, or a fix
 you made yourself): don't create a new deployment — that would change the
-address and break every phone. Instead, in this order:
+address and break every phone.
 
-1. Paste in every file under `apps-script/` again (all eleven `.gs` files
+**Pick a quiet time of day.** Somebody is relying on this app to tell him
+which pills he has taken. Upgrade when no dose is due and nobody is
+mid-tick — mid-morning, or after the bedtime doses are done — not at 7am
+with the morning tablets waiting.
+
+**Two halves deploy separately, and the order matters.** The frontend is
+the GitHub Pages site; the backend is this Apps Script deployment.
+**Always do the backend first.** A new backend keeps the old frontend
+working, because the data `bootstrap` sends it is unchanged — the new
+actions are simply there unused. The other way round, every new button on
+the phones calls an action Apps Script hasn't learned yet and comes back
+with "Unknown action." until you catch up. So: Apps Script first, then the
+website.
+
+**Write down the version number you are on now**, before you change
+anything. You'll find it under **Deploy → Manage deployments**, next to
+the active deployment ("Version 7", say). That number is your way back.
+
+Then, in this order:
+
+1. **Note the current version number** (above). Thirty seconds now, and a
+   one-minute rollback later instead of a scramble.
+2. Paste in every file under `apps-script/` again (all eleven `.gs` files
    plus `appsscript.json`), overwriting what's there, so the editor matches
-   the new release exactly.
-2. Open `CheckSheet.gs`, choose **`checkSheet`** from the function dropdown,
+   the new release exactly. Three of the eleven are **new in release 2a**
+   and won't exist in your project yet — create them with the **+** next to
+   "Files" the way Part 2 step 3 describes:
+   - `Drive.gs` — puts the photos in your Drive folder
+   - `Photos.gs` — checks a photo before it is uploaded
+   - `Prescriptions.gs` — checks a dose or schedule before it is saved
+
+   The other eight (`Access.gs`, `Actions.gs`, `Adapters.gs`, `AuthCore.gs`,
+   `CheckSheet.gs`, `Code.gs`, `Data.gs`, `Schedule.gs`) already exist:
+   open each, select all, delete, paste.
+3. Open `CheckSheet.gs`, choose **`checkSheet`** from the function dropdown,
    and click **Run** — and if Google asks you to authorize the script
-   again (this can happen after new code is added, even if you authorized
-   it before), accept it, same as Part 2 step 4. Do this **before** the
-   next step: a deployment made before this authorization is accepted will
-   fail the first time anyone tries to add a photo.
-3. Only then go **Deploy → Manage deployments**, click the pencil (**Edit**)
+   again, accept it, same as Part 2 step 4. **It will ask this time:**
+   release 2a adds the Google Drive permission for photos (Part 2 step 2
+   explains exactly what it covers), and Google asks again whenever the
+   permissions change. Do this **before** the next step: a deployment made
+   before this authorization is accepted will fail the first time anyone
+   tries to add a photo.
+4. Only then go **Deploy → Manage deployments**, click the pencil (**Edit**)
    on the existing deployment, change **Version** to **New version**, and
    click **Deploy**. The `/exec` address stays exactly the same.
+5. Now update the website half, and open the app on your own phone to check
+   it before telling anyone else it's ready.
+
+Pasting code into the editor is safe on its own: a deployment is frozen at
+the version it was made from, so the family keeps using the old code until
+step 4. Step 4 is the moment the change actually reaches the phones.
+
+### If a release goes wrong — rolling back
+
+You can be back on the version that worked in under a minute, and you don't
+need any code to do it:
+
+1. **Deploy → Manage deployments**.
+2. Click the pencil (**Edit**) on the active deployment.
+3. Open the **Version** dropdown and choose the **previous** version — the
+   number you wrote down in step 1 above.
+4. Click **Deploy**.
+
+The `/exec` address doesn't change, so every phone is back on the old code
+as soon as it next loads. Nothing is lost: old versions are kept, so you
+can go forward again the same way once the problem is fixed.
+
+Two things a rollback does **not** undo, so check them if the problem
+looks like one of these:
+
+- **Your Sheet.** Anything already written to it stays written. Doses
+  already ticked are still ticked, which is what you want.
+- **The website half.** If you had already updated GitHub Pages, roll that
+  back too, or the new phones will be calling actions the old backend
+  doesn't have.
 
 ## Part 4 — Build the private link
 
