@@ -50,6 +50,14 @@ const WRITE_ACTIONS = [
   ["updateMedicine", t => ({ action: "updateMedicine", token: t, medicineId: "MED01", fields: { generic_name: "Amlodipine besylate" } })],
   ["uploadMedicinePhoto", t => ({ action: "uploadMedicinePhoto", token: t, medicineId: "MED01", slot: "box", dataUrl: TINY_JPEG })],
   ["removeMedicinePhoto", t => ({ action: "removeMedicinePhoto", token: t, medicineId: "MED01", slot: "pill_front" })],
+  ["addHospital", t => ({ action: "addHospital", token: t, fields: { name: "Sunrise Clinic" } })],
+  ["updateHospital", t => ({ action: "updateHospital", token: t, hospitalId: "HOS01", fields: { phone: "02-555-0000" } })],
+  // Both fixture hospitals (HOS01, HOS02) are referenced elsewhere, so a fresh, unreferenced one
+  // is added first -- that add is what "before" is measured against, since it runs inside build().
+  ["deleteHospital", (t, ctx) => {
+    const added = handle({ action: "addHospital", token: t, fields: { name: "Temp Clinic" } }, ctx);
+    return { action: "deleteHospital", token: t, hospitalId: added.data.hospital_id };
+  }],
 ];
 
 // Actions that only read. A lock here would serialize every phone's refresh behind every write
@@ -66,7 +74,7 @@ for (const [name, build] of WRITE_ACTIONS) {
   test(`${name} takes the script lock`, () => {
     const { ctx, token } = world();
     const before = ctx.locksTaken();
-    const r = handle(build(token), ctx);
+    const r = handle(build(token, ctx), ctx);
     assert.equal(r.ok, true, `${name} should have succeeded: ${JSON.stringify(r)}`);
     assert.ok(
       ctx.locksTaken() > before,

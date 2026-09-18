@@ -493,6 +493,22 @@ function medicineFields(fields) {
   return patch;
 }
 
+const HOSPITAL_FIELDS = ["name", "phone", "address", "map_link", "notes"];
+
+function hospitalFields(fields) {
+  const patch = {};
+  HOSPITAL_FIELDS.forEach(k => { if (fields && fields[k] !== undefined) patch[k] = str(fields[k]).slice(0, 200); });
+  return patch;
+}
+
+// Every library delete answers the same question: does anything still point at this row? If it
+// does, removing it would leave a prescription naming a doctor who no longer exists, or a dose
+// log for a medicine that has vanished -- the family's history would stop reading correctly. So
+// the row stays, and the message says what is holding it.
+function referencesTo(ctx, checks) {
+  return checks.filter(c => ctx.db.rows(c.tab).some(r => str(r[c.column]) === c.value)).map(c => c.label);
+}
+
 Object.assign(ACTIONS, {
   addPrescription(req, ctx) {
     const userId = str(req.userId);
@@ -734,5 +750,57 @@ Object.assign(ACTIONS, {
       warnings.push("The photo was removed from the app, but the file is still in Drive. You can delete it there.");
     }
     return { warnings };
+  },
+
+  addHospital(req, ctx) {
+    const { user } = requireUser(req, ctx);
+    const patch = hospitalFields(req.fields);
+    if (!patch.name) throw new AppError("BAD_INPUT", "A hospital or clinic needs a name.");
+    return ctx.lock(() => {
+      const stamp = bangkokStamp(ctx.nowMs());
+      const row = Object.assign({ hospital_id: ctx.newId("HOS") }, patch, {
+        created_at: stamp, created_by: user.user_id, updated_at: stamp, updated_by: user.user_id,
+      });
+      ctx.db.append("Hospitals", row);
+      return stripRow(ctx.db.rows("Hospitals").find(h => str(h.hospital_id) === row.hospital_id));
+    });
+  },
+
+  updateHospital(req, ctx) {
+    const { user } = requireUser(req, ctx);
+    const hospitalId = str(req.hospitalId);
+    const patch = hospitalFields(req.fields);
+    if (Object.prototype.hasOwnProperty.call(patch, "name") && !patch.name) {
+      throw new AppError("BAD_INPUT", "A hospital or clinic needs a name.");
+    }
+    return ctx.lock(() => {
+      if (!ctx.db.rows("Hospitals").some(h => str(h.hospital_id) === hospitalId)) {
+        throw new AppError("BAD_INPUT", "That hospital isn't in the list any more. Refresh and try again.");
+      }
+      patch.updated_at = bangkokStamp(ctx.nowMs());
+      patch.updated_by = user.user_id;
+      ctx.db.update("Hospitals", "hospital_id", hospitalId, patch);
+      return stripRow(ctx.db.rows("Hospitals").find(h => str(h.hospital_id) === hospitalId));
+    });
+  },
+
+  deleteHospital(req, ctx) {
+    requireUser(req, ctx);
+    const hospitalId = str(req.hospitalId);
+    return ctx.lock(() => {
+      if (!ctx.db.rows("Hospitals").some(h => str(h.hospital_id) === hospitalId)) {
+        throw new AppError("BAD_INPUT", "That hospital isn't in the list any more. Refresh and try again.");
+      }
+      const held = referencesTo(ctx, [
+        { tab: "HospitalNumbers", column: "hospital_id", value: hospitalId, label: "a hospital number" },
+        { tab: "CareTeam", column: "hospital_id", value: hospitalId, label: "someone's care team" },
+        { tab: "DoctorHospitals", column: "hospital_id", value: hospitalId, label: "a doctor who works there" },
+      ]);
+      if (held.length) {
+        throw new AppError("CONFLICT", `This hospital is still used by ${held.join(" and ")}, so it stays in the list. Remove those first if you really want it gone.`);
+      }
+      ctx.db.remove("Hospitals", h => str(h.hospital_id) === hospitalId);
+      return { deleted: true };
+    });
   },
 });
