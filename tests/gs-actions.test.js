@@ -221,6 +221,62 @@ test("a photo for a medicine that is not in the Sheet is refused before anything
   assert.equal(context.DriveApp.files.size, 0, "no orphan file is left in the family's Drive");
 });
 
+// ---- the request cache must never answer a read taken inside the lock ----
+// requestDb_ (apps-script/Adapters.gs) caches each tab for the whole request and clears a tab
+// only when THIS request writes to it. Every action that reads a tab before taking its lock
+// would otherwise have its in-lock re-read served from that stale copy, which is the one thing
+// the lock exists to prevent. liveCtx_ now calls db.invalidate() once the lock is held.
+// These two tests commit a change to the Sheet from inside tryLock -- exactly the window where
+// another phone's request would land -- and fail if the cache is consulted afterwards.
+
+// Runs `change` the first time a lock is acquired, then behaves like an ordinary free lock.
+// Install it AFTER logging in, so the first lock it sees is the one under test.
+function commitOnNextLock(context, change) {
+  let fired = false;
+  context.LockService = {
+    getScriptLock: () => ({
+      tryLock: () => { if (!fired) { fired = true; change(); } return true; },
+      releaseLock: () => {},
+    }),
+  };
+}
+
+function appendGridRow(context, tab, obj) {
+  const sheet = sheetOf(context, tab);
+  sheet.grid.push(sheet.grid[0].map(h => (obj[h] == null ? "" : String(obj[h]))));
+}
+
+test("a medicine deleted after uploadMedicinePhoto's first read is still seen inside the lock", () => {
+  const context = loadGs();
+  installFakes(context);
+  const token = loginAsTop(context);
+  commitOnNextLock(context, () => {
+    const sheet = sheetOf(context, "Medicines");
+    sheet.grid = sheet.grid.filter(r => r[0] !== "MED01");
+  });
+  const r = post(context, { action: "uploadMedicinePhoto", token, medicineId: "MED01", slot: "box", dataUrl: JPEG });
+  assert.equal(r.ok, false, `the in-lock re-check must read the Sheet, not the request cache: ${JSON.stringify(r)}`);
+  assert.equal(r.error.code, "BAD_INPUT");
+  assert.match(r.error.message, /isn't in the list any more/);
+});
+
+test("restartPrescription sees a prescription that went Active after its first read, and refuses", () => {
+  const context = loadGs();
+  installFakes(context);
+  const token = loginAsTop(context);
+  // RX06 is U01's Stopped prescription for MED05. Between the read that finds it and the lock,
+  // someone else starts MED05 for U01 again -- restarting now would leave two Active
+  // prescriptions for one medicine, which is the double dose this rebuild exists to stop.
+  commitOnNextLock(context, () => appendGridRow(context, "Prescriptions", {
+    prescription_id: "RX99", user_id: "U01", medicine_id: "MED05", frequency: "Daily",
+    meal_timing: "Any time", status: "Active", started_on: "2026-09-01",
+  }));
+  const r = post(context, { action: "restartPrescription", token, prescriptionId: "RX06" });
+  assert.equal(r.ok, false, `the duplicate guard must read the Sheet, not the request cache: ${JSON.stringify(r)}`);
+  assert.equal(r.error.code, "CONFLICT");
+  assert.equal(gridRows(context, "Prescriptions").find(p => p.prescription_id === "RX06").status, "Stopped");
+});
+
 test("a write action without a token is refused by the real .gs files, and the Sheet is untouched", () => {
   const context = loadGs();
   installFakes(context);

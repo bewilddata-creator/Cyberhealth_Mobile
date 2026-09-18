@@ -35,6 +35,11 @@ function withLock_(fn) {
 }
 
 // Reads each tab at most once per request; any write to a tab clears that tab's cache.
+// The cache only ever knows about THIS request's writes, so a tab read before a lock was taken
+// would still be answered from that stale copy inside the lock, while another phone's request
+// was busy changing it. liveCtx_ (apps-script/Code.gs) therefore calls invalidate() the moment
+// the lock is acquired: outside a lock the cache is a plain optimisation for read-only paths
+// like bootstrap, and inside one every read is a fresh read of the Sheet.
 function requestDb_() {
   const cache = {};
   return {
@@ -45,5 +50,6 @@ function requestDb_() {
     append(tab, obj) { delete cache[tab]; return SheetDb.append(tab, obj); },
     update(tab, keyCol, keyVal, patch) { delete cache[tab]; return SheetDb.update(tab, keyCol, keyVal, patch); },
     remove(tab, pred) { delete cache[tab]; return SheetDb.remove(tab, pred); },
+    invalidate() { Object.keys(cache).forEach(tab => { delete cache[tab]; }); },
   };
 }

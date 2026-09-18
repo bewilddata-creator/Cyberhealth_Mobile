@@ -21,8 +21,9 @@ function json_(obj) {
 }
 
 function liveCtx_() {
+  const db = requestDb_();
   return {
-    db: requestDb_(),
+    db,
     sessions: ScriptSessions,
     attempts: CacheAttempts,
     sha256: sha256Live_,
@@ -32,7 +33,10 @@ function liveCtx_() {
     // a subset of [a-z0-9], so the first 8 characters (with the dashes stripped) are enough.
     newId: prefix => prefix + "-" + Utilities.getUuid().replace(/-/g, "").slice(0, 8),
     nowMs: () => Date.now(),
-    lock: withLock_,
+    // Every cached tab is dropped once the lock is held and before the callback runs, so
+    // "re-read inside the lock" means a real re-read of the Sheet in every action at once,
+    // rather than each action having to remember not to read the tab before locking.
+    lock: fn => withLock_(() => { db.invalidate(); return fn(); }),
     log: err => console.error(err && err.stack ? err.stack : err),
     settings: key => SheetSettings.get(key),
     drive: {
