@@ -157,6 +157,29 @@ test("checkSheet flags a Users row with a blank active cell", () => {
   assert.ok(problems.some(p => p.includes("Users") && p.includes("U03") && p.toLowerCase().includes("active")), problems.join("\n"));
 });
 
+test("checkSheet names a date_of_birth the app cannot read, and says how to write it", () => {
+  const tables = clone(fixtureTables());
+  tables.EmergencyCards = tables.EmergencyCards.map(r => (r.user_id === "U01" ? { ...r, date_of_birth: "14/07/1962" } : r));
+  const problems = runCheckSheet(tables);
+  assert.ok(
+    problems.some(p => p.includes("EmergencyCards") && p.includes("U01") && p.includes("14/07/1962") && p.includes("YYYY-MM-DD")),
+    problems.join("\n"),
+  );
+});
+
+test("checkSheet accepts a blank date_of_birth", () => {
+  const tables = clone(fixtureTables());
+  tables.EmergencyCards = tables.EmergencyCards.map(r => ({ ...r, date_of_birth: "" }));
+  assert.deepEqual(runCheckSheet(tables).filter(p => p.includes("date_of_birth")), []);
+});
+
+test("checkSheet names an emergency card whose user_id is not in Users", () => {
+  const tables = clone(fixtureTables());
+  tables.EmergencyCards = tables.EmergencyCards.map(r => (r.user_id === "U02" ? { ...r, user_id: "U99" } : r));
+  const problems = runCheckSheet(tables);
+  assert.ok(problems.some(p => p.includes("EmergencyCards") && p.includes("U99") && p.includes("Users")), problems.join("\n"));
+});
+
 test("checkSheet reports an empty photo_folder_id as needed from release 2", () => {
   const tables = clone(fixtureTables());
   tables.Settings = tables.Settings.map(r => (r.key === "photo_folder_id" ? { ...r, value: "" } : r));

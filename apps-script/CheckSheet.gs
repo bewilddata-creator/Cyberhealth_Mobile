@@ -121,6 +121,17 @@ function checkSheet() {
   checkReferences_("CareTeam", [["user_id", "Users"], ["doctor_id", "Doctors"], ["hospital_id", "Hospitals"]]);
   checkReferences_("HospitalNumbers", [["user_id", "Users"], ["hospital_id", "Hospitals"]]);
   checkReferences_("DoctorHospitals", [["doctor_id", "Doctors"], ["hospital_id", "Hospitals"]]);
+  checkReferences_("EmergencyCards", [["user_id", "Users"]]);
+
+  // A date typed the Thai/British way (14/07/1962) is a perfectly sensible thing to write and
+  // the app cannot read it: the card silently says "Birth date not added" instead of the age.
+  rowsOf("EmergencyCards").forEach(row => {
+    if (blankRow_(row)) return;
+    const dob = String(row.date_of_birth || "").trim();
+    if (dob && !parseDate(dob)) {
+      problems.push(`EmergencyCards row ${rowLabel_("EmergencyCards", row)}: date_of_birth "${dob}" is not a date the app can read -- write it as YYYY-MM-DD, like 1962-07-14.`);
+    }
+  });
 
   // Duplicate active prescriptions for the same person and medicine.
   const activeCombos = {};
