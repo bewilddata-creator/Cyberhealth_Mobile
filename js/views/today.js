@@ -32,6 +32,19 @@ function mealTag(meal) {
   return "";
 }
 
+// A ticked row shows what was actually swallowed -- the DoseLog snapshot -- not whatever the
+// prescription says now. A dose changed later in the day must never rewrite the morning's record,
+// which is how the old version ended up prompting a second dose.
+const shownAmount = item => (item.tick ? item.tick.amount : item.dose.amount);
+const shownUnit = item => (item.tick ? item.tick.unit : item.dose.unit);
+function changedNote(item) {
+  if (!item.tick) return "";
+  const sameAmount = String(item.tick.amount) === String(item.dose.amount);
+  const sameUnit = String(item.tick.unit) === String(item.dose.unit);
+  if (sameAmount && sameUnit) return "";
+  return `<div class="s changed">Now ${esc(item.dose.amount)} ${esc(item.dose.unit)}</div>`;
+}
+
 function doseRow(item, canTick) {
   const name = item.medicine ? item.medicine.generic_name : "medicine";
   const shot = item.medicine && item.medicine.form === "Injection" ? `<span class="mini shot">Injection</span>` : "";
@@ -44,11 +57,11 @@ function doseRow(item, canTick) {
     : `<span class="check readonly" role="img" data-on="${!!t}" aria-label="${esc(name)}: ${t ? "taken" : "not taken yet"}">${I.check}</span>`;
   return `<div class="dose ${t ? "taken" : ""}" style="--slot-soft:${SLOT_COLORS[item.timeOfDay][1]}">${thumb(item.medicine)}
     <div class="info"><div class="name">${medName(item.medicine)}</div>
-      <div class="meta"><span class="qty">${esc(item.dose.amount)} ${esc(item.dose.unit)}</span>${mealTag(item.prescription.meal)}${shot}</div>${by}</div>
+      <div class="meta"><span class="qty">${esc(shownAmount(item))} ${esc(shownUnit(item))}</span>${mealTag(item.prescription.meal)}${shot}</div>${changedNote(item)}${by}</div>
     ${control}</div>`;
 }
 
-export function renderToday({ model, week, ctx, today, hour, warnings }) {
+export function renderToday({ model, week = [], ctx, today, hour, warnings }) {
   const mine = ctx.owner === ctx.me.user_id;
   const ownerName = personName(ctx, ctx.owner);
   const head = `<div class="top"><div class="hello"><span class="av" style="background:${avatarColor(ctx.people, ctx.me.user_id)}">${esc(ctx.me.display_name.slice(0, 1))}</span>

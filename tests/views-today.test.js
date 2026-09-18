@@ -11,17 +11,37 @@ const ctx = {
   owner: "U01",
 };
 
+// `dose`/`tick` are shorthand overrides for a single Morning-by-default dose item (used by the
+// ticked-vs-current-dose tests below); they are consumed here and never leak into the model shape
+// itself. An explicit `slots` override (used by other tests) still wins over the computed one.
 function baseModel(over = {}) {
+  const { dose, tick, ...rest } = over;
+  const slots = [
+    { timeOfDay: "Morning", items: [], taken: 0, due: 0, status: "none", canTickAll: false },
+    { timeOfDay: "Noon", items: [], taken: 0, due: 0, status: "none", canTickAll: false },
+    { timeOfDay: "Evening", items: [], taken: 0, due: 0, status: "none", canTickAll: false },
+    { timeOfDay: "Bedtime", items: [], taken: 0, due: 0, status: "none", canTickAll: false },
+  ];
+  if (dose) {
+    const timeOfDay = dose.timeOfDay || "Morning";
+    const item = {
+      key: dose.id || "DS01",
+      timeOfDay,
+      prescription: { meal: "" },
+      dose: { amount: dose.amount, unit: dose.unit },
+      medicine: null,
+      tick: tick || null,
+    };
+    const slot = slots.find(s => s.timeOfDay === timeOfDay);
+    slot.items.push(item);
+    slot.due = slot.items.length;
+    slot.taken = slot.items.filter(i => i.tick).length;
+  }
   return {
     date: "2026-09-17", isToday: true, canTick: true, viewerIsOwner: true, historyNotLoaded: false,
     taken: 0, due: 0, asNeeded: [],
-    slots: [
-      { timeOfDay: "Morning", items: [], taken: 0, due: 0, status: "none", canTickAll: false },
-      { timeOfDay: "Noon", items: [], taken: 0, due: 0, status: "none", canTickAll: false },
-      { timeOfDay: "Evening", items: [], taken: 0, due: 0, status: "none", canTickAll: false },
-      { timeOfDay: "Bedtime", items: [], taken: 0, due: 0, status: "none", canTickAll: false },
-    ],
-    ...over,
+    slots,
+    ...rest,
   };
 }
 
@@ -60,4 +80,29 @@ test("renderToday shows the 60-day note and never a 'missed' count for an untrac
   const html = renderToday({ model, week, ctx, today: "2026-09-17", hour: 9, warnings: [] });
   assert.ok(html.includes("Older than 60 days"), html);
   assert.ok(!html.includes("missed"), html);
+});
+
+test("a ticked row shows the amount that was actually taken, not the amount now prescribed", () => {
+  const model = baseModel({ dose: { id: "DS01", timeOfDay: "Morning", amount: 0.5, unit: "tablet" }, tick: { at: "07:42", amount: "1", unit: "tablet" } });
+  const html = renderToday({ model, ctx, date: "2026-09-18", today: "2026-09-18" });
+  assert.match(html, /1 tablet/, "the taken amount is what the record says");
+  assert.doesNotMatch(html.split("</button>")[0], /0\.5 tablet(?![^<]*now)/);
+});
+
+test("a ticked row whose dose has since changed also says what it is now", () => {
+  const model = baseModel({ dose: { id: "DS01", timeOfDay: "Morning", amount: 0.5, unit: "tablet" }, tick: { at: "07:42", amount: "1", unit: "tablet" } });
+  const html = renderToday({ model, ctx, date: "2026-09-18", today: "2026-09-18" });
+  assert.match(html, /now 0\.5 tablet/i);
+});
+
+test("an un-ticked row shows the current dose", () => {
+  const model = baseModel({ dose: { id: "DS01", timeOfDay: "Morning", amount: 0.5, unit: "tablet" }, tick: null });
+  const html = renderToday({ model, ctx, date: "2026-09-18", today: "2026-09-18" });
+  assert.match(html, /0\.5 tablet/);
+});
+
+test("a ticked row whose dose has not changed says nothing extra", () => {
+  const model = baseModel({ dose: { id: "DS01", timeOfDay: "Morning", amount: 1, unit: "tablet" }, tick: { at: "07:42", amount: "1", unit: "tablet" } });
+  const html = renderToday({ model, ctx, date: "2026-09-18", today: "2026-09-18" });
+  assert.doesNotMatch(html, /now 1 tablet/i);
 });
