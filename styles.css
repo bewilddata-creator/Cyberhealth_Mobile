@@ -145,7 +145,7 @@ button.banner.warn{background:var(--yellow-2)}
 /* lists, detail, doctors */
 .medrow{display:grid;grid-template-columns:50px minmax(0,1fr) 36px;gap:12px;align-items:center;background:var(--sand);border:0;border-radius:22px;padding:10px;text-align:left;width:100%}
 .medrow .s{font-size:14px;color:var(--ink-2);margin-top:2px}
-.changed{opacity:.65;font-style:italic}
+.changed{font-size:13px;color:var(--ink-2);margin-top:2px;opacity:.65;font-style:italic}
 .medrow .go{width:36px;height:36px;border-radius:50%;background:var(--paper);display:grid;place-items:center}
 .medrow .go svg{width:16px;height:16px}
 .medrow.stopped .name{text-decoration:line-through;color:var(--ink-2)}

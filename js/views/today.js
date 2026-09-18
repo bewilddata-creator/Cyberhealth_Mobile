@@ -61,7 +61,7 @@ function doseRow(item, canTick) {
     ${control}</div>`;
 }
 
-export function renderToday({ model, week = [], ctx, today, hour, warnings }) {
+export function renderToday({ model, week, ctx, today, hour, warnings }) {
   const mine = ctx.owner === ctx.me.user_id;
   const ownerName = personName(ctx, ctx.owner);
   const head = `<div class="top"><div class="hello"><span class="av" style="background:${avatarColor(ctx.people, ctx.me.user_id)}">${esc(ctx.me.display_name.slice(0, 1))}</span>

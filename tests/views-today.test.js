@@ -84,25 +84,28 @@ test("renderToday shows the 60-day note and never a 'missed' count for an untrac
 
 test("a ticked row shows the amount that was actually taken, not the amount now prescribed", () => {
   const model = baseModel({ dose: { id: "DS01", timeOfDay: "Morning", amount: 0.5, unit: "tablet" }, tick: { at: "07:42", amount: "1", unit: "tablet" } });
-  const html = renderToday({ model, ctx, date: "2026-09-18", today: "2026-09-18" });
-  assert.match(html, /1 tablet/, "the taken amount is what the record says");
-  assert.doesNotMatch(html.split("</button>")[0], /0\.5 tablet(?![^<]*now)/);
+  const html = renderToday({ model, week, ctx, date: "2026-09-18", today: "2026-09-18" });
+  // Target the quantity element itself, not just any occurrence of the taken amount elsewhere on
+  // the row (the .by receipt div already prints tick.amount regardless of what .qty shows) --
+  // otherwise this assertion cannot distinguish the fix from the bug it exists to catch.
+  assert.match(html, /<span class="qty">1 tablet<\/span>/, "the taken amount is what the record says");
+  assert.doesNotMatch(html, /<span class="qty">0\.5 tablet<\/span>/);
 });
 
 test("a ticked row whose dose has since changed also says what it is now", () => {
   const model = baseModel({ dose: { id: "DS01", timeOfDay: "Morning", amount: 0.5, unit: "tablet" }, tick: { at: "07:42", amount: "1", unit: "tablet" } });
-  const html = renderToday({ model, ctx, date: "2026-09-18", today: "2026-09-18" });
+  const html = renderToday({ model, week, ctx, date: "2026-09-18", today: "2026-09-18" });
   assert.match(html, /now 0\.5 tablet/i);
 });
 
 test("an un-ticked row shows the current dose", () => {
   const model = baseModel({ dose: { id: "DS01", timeOfDay: "Morning", amount: 0.5, unit: "tablet" }, tick: null });
-  const html = renderToday({ model, ctx, date: "2026-09-18", today: "2026-09-18" });
-  assert.match(html, /0\.5 tablet/);
+  const html = renderToday({ model, week, ctx, date: "2026-09-18", today: "2026-09-18" });
+  assert.match(html, /<span class="qty">0\.5 tablet<\/span>/);
 });
 
 test("a ticked row whose dose has not changed says nothing extra", () => {
   const model = baseModel({ dose: { id: "DS01", timeOfDay: "Morning", amount: 1, unit: "tablet" }, tick: { at: "07:42", amount: "1", unit: "tablet" } });
-  const html = renderToday({ model, ctx, date: "2026-09-18", today: "2026-09-18" });
+  const html = renderToday({ model, week, ctx, date: "2026-09-18", today: "2026-09-18" });
   assert.doesNotMatch(html, /now 1 tablet/i);
 });
