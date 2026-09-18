@@ -32,6 +32,7 @@ const SHELL = [
   "js/views/detail.js",
   "js/views/forms.js",
   "js/views/doctors.js",
+  "js/views/libraries.js",
   "js/views/emergency.js",
   "js/views/more.js"
 ];

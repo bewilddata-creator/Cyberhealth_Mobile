@@ -190,6 +190,19 @@ test("renderMore lists Sheet problems (as { user_id, message } objects) and comi
   assert.ok(html.includes("data-refresh"));
 });
 
+// The three shared lists are reachable from More, and no longer advertised as coming soon --
+// they are here. Anchored on the whole button tag, not the bare attribute name.
+test("renderMore opens each of the three family lists, and no longer promises them as coming soon", () => {
+  const html = renderMore({ me: { display_name: "Dad" }, warnings: [] });
+  for (const key of ["medicines", "doctors", "hospitals"]) {
+    assert.ok(html.includes(`<button type="button" class="listbtn" data-library="${key}">`), `data-library="${key}" is missing`);
+  }
+  assert.ok(html.includes("<strong>Medicines</strong>") && html.includes("<strong>Doctors</strong>") && html.includes("<strong>Hospitals &amp; clinics</strong>"), html);
+  assert.ok(!html.includes("Hospitals &amp; doctors"), "the coming-soon list must not still promise the libraries");
+  assert.ok(html.includes("<strong>Hospital numbers</strong>"), "the rest of the coming-soon list is untouched");
+  assert.ok(html.includes("<strong>Care team</strong>") && html.includes("<strong>Sharing</strong>"));
+});
+
 // ---- the name he actually reads on the box ----
 //
 // The box in his hand says "Norvasc"; the Sheet's generic_name says "Amlodipine". Until the brand

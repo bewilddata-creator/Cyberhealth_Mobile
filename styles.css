@@ -292,4 +292,31 @@ button.banner.warn{background:var(--yellow-2)}
 .btnrow button{border:0;background:var(--paper);border-radius:999px;padding:9px 14px;font-weight:700;font-size:13px;min-height:44px}
 .btnrow button.danger{color:var(--alert)}
 
+/* the family's shared lists: medicines, doctors, hospitals & clinics */
+.listbtn{border:0;background:none;display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:8px 0;min-height:44px}
+.listbtn + .listbtn{border-top:1.5px dashed var(--line)}
+.listbtn > div{flex:1;min-width:0}
+.listbtn strong{display:block;font-size:17px}
+.listbtn small{display:block;color:var(--ink-2);font-size:14px}
+.listbtn .go{width:44px;height:44px;border-radius:50%;background:var(--paper);display:grid;place-items:center;flex:none}
+.listbtn .go svg{width:16px;height:16px}
+/* A row and its Delete sit side by side -- two buttons, never a button inside a button. Below
+   360px (288px of content) the Delete drops underneath instead of squeezing the medicine's name
+   down to a couple of letters per line. */
+.libraryrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center}
+@media (max-width:359px){.libraryrow{grid-template-columns:minmax(0,1fr)}.libraryrow .rowdelete{justify-self:end}}
+/* 44px in BOTH directions: min-width as well as min-height, so a short word can never shrink the
+   target to something he has to aim at. */
+.rowdelete{border:1.5px dashed var(--ink-3);background:var(--paper);color:var(--alert);border-radius:999px;padding:0 14px;
+  font-weight:700;font-size:14px;min-height:44px;min-width:44px;white-space:nowrap}
+.libraryrow .medrow .spec{margin-top:4px}
+/* One hospital per line on the doctor form, the whole 48px line tappable, not just the box. */
+.checklist{display:grid;gap:6px}
+.checkrow{display:flex;align-items:center;gap:12px;background:var(--sand);border:1.5px dashed var(--ink-3);border-radius:16px;
+  padding:10px 14px;min-height:48px;font-weight:700;font-size:15px;cursor:pointer}
+.checkrow input{width:24px;height:24px;margin:0;flex:none;accent-color:var(--ink)}
+.checkrow span{min-width:0;overflow-wrap:anywhere}
+.checkrow:has(input:checked){background:var(--ink);color:var(--cream);border-color:var(--ink)}
+.checkrow:has(input:focus-visible){outline:3px solid var(--ink);outline-offset:2px}
+
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}

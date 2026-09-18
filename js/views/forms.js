@@ -138,6 +138,99 @@ export function renderMedicineForm({ medicine, error, busy }) {
     </form>`;
 }
 
+// ---- a doctor in the family's shared list ----
+//
+// Every input name is the server's own field name (DOCTOR_FIELDS in server/actions.js:
+// name, specialty, phone, other_contact, notes), so the submit handler can hand the fields
+// straight to saveDoctor with no translation table in between. The hospital boxes all share
+// name="hospitalIds", which is the array setDoctorHospitals takes.
+
+// A doctor's photo lives on the doctor row, which has to exist before a photo can be attached to
+// it -- so a brand-new doctor is saved first and gets the photo buttons on the next visit, and
+// the form says so rather than showing buttons that would fail.
+function doctorPhotoBlock(model) {
+  const doctorId = model.doctorId || (model.doctor && model.doctor.doctor_id) || "";
+  if (!doctorId) return `<p class="note">You can add a photo of the doctor once they're saved.</p>`;
+  const url = model.photoUrl || "";
+  return `<div class="photorow">
+    <span class="pic">${url ? `<img src="${esc(url)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : I.team}</span>
+    <div><strong>Photo of the doctor</strong>
+      <div class="btnrow">
+        <button type="button" data-upload-doctor-photo="${val(doctorId)}">${url ? "Replace" : "Add photo"}</button>
+        ${url ? `<button type="button" class="danger" data-remove-doctor-photo="${val(doctorId)}">Remove</button>` : ""}
+      </div></div></div>`;
+}
+
+function hospitalChecks(model) {
+  const hospitals = model.hospitals || [];
+  const picked = (model.hospitalIds || []).map(String);
+  if (!hospitals.length) {
+    return `<div class="form-row"><span class="rowlabel">Where do they see patients?</span>
+      <p class="note">There are no hospitals or clinics in the list yet. Add one on the Hospitals list first, then come back.</p></div>`;
+  }
+  return `<div class="form-row"><span class="rowlabel">Where do they see patients? Tick every place.</span>
+    <div class="checklist">${hospitals.map(h =>
+      `<label class="checkrow"><input type="checkbox" name="hospitalIds" value="${val(h.hospital_id)}" ${picked.includes(String(h.hospital_id)) ? "checked" : ""}><span>${esc(h.name)}</span></label>`).join("")}</div></div>`;
+}
+
+const DOCTOR_FIELDS_FORM = [
+  ["name", "Doctor's name, as you'd say it", "text", true],
+  ["specialty", "What they treat, like heart or kidneys (optional)", "text", false],
+  ["phone", "Phone number (optional)", "tel", false],
+  ["other_contact", "Another way to reach them, like a LINE ID (optional)", "text", false],
+  ["notes", "Anything else worth remembering (optional)", "textarea", false],
+];
+
+export function renderDoctorForm({ model, error, busy }) {
+  const m = model || {};
+  const doctor = m.doctor || {};
+  const editing = !!(m.doctorId || doctor.doctor_id);
+  const fields = DOCTOR_FIELDS_FORM.map(([name, label, type, required]) => `<div class="field"><label for="f-doc-${name}">${esc(label)}</label>${type === "textarea"
+    ? `<textarea id="f-doc-${name}" name="${name}" rows="3">${val(doctor[name])}</textarea>`
+    : `<input id="f-doc-${name}" name="${name}" value="${val(doctor[name])}" type="${type}" autocomplete="off" ${required ? "required" : ""}>`}</div>`).join("");
+  return `${topBar(editing ? "Edit this doctor" : "New doctor")}
+    <h1 class="big">${editing ? "Edit this doctor" : "Add a doctor"}</h1>
+    <p class="note">This is the family's shared list of doctors. Who they look after, and the hospital number, are set separately for each person.</p>
+    <form class="edit-form" data-form="doctor">
+      ${editing ? `<input type="hidden" name="doctorId" value="${val(m.doctorId || doctor.doctor_id)}">` : ""}
+      ${fields}
+      ${doctorPhotoBlock(m)}
+      ${hospitalChecks(m)}
+      ${errorLine(error)}
+      ${saveButton(busy, editing ? "Save changes" : "Add this doctor")}
+    </form>`;
+}
+
+// ---- a hospital or clinic in the family's shared list ----
+//
+// Same rule: every input name is one of HOSPITAL_FIELDS (name, phone, address, map_link, notes).
+
+const HOSPITAL_FIELDS_FORM = [
+  ["name", "Name of the hospital or clinic", "text", true],
+  ["phone", "Phone number (optional)", "tel", false],
+  ["address", "Address (optional)", "textarea", false],
+  ["map_link", "Link to it on a map, if you have one (optional)", "url", false],
+  ["notes", "Anything else worth remembering (optional)", "textarea", false],
+];
+
+export function renderHospitalForm({ model, error, busy }) {
+  const m = model || {};
+  const hospital = m.hospital || {};
+  const editing = !!(m.hospitalId || hospital.hospital_id);
+  const fields = HOSPITAL_FIELDS_FORM.map(([name, label, type, required]) => `<div class="field"><label for="f-hos-${name}">${esc(label)}</label>${type === "textarea"
+    ? `<textarea id="f-hos-${name}" name="${name}" rows="2">${val(hospital[name])}</textarea>`
+    : `<input id="f-hos-${name}" name="${name}" value="${val(hospital[name])}" type="${type}" autocomplete="off" ${required ? "required" : ""}>`}</div>`).join("");
+  return `${topBar(editing ? "Edit this hospital" : "New hospital or clinic")}
+    <h1 class="big">${editing ? "Edit this place" : "Add a hospital or clinic"}</h1>
+    <p class="note">Anywhere the family goes for care — a big hospital or a small clinic, both belong here.</p>
+    <form class="edit-form" data-form="hospital">
+      ${editing ? `<input type="hidden" name="hospitalId" value="${val(m.hospitalId || hospital.hospital_id)}">` : ""}
+      ${fields}
+      ${errorLine(error)}
+      ${saveButton(busy, editing ? "Save changes" : "Add this place")}
+    </form>`;
+}
+
 // ---- somebody starts taking a medicine ----
 
 function medicinePicker(model) {
