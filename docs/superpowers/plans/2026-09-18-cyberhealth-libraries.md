@@ -151,7 +151,7 @@ test("deleteHospital removes one nothing points at", () => {
 test("deleteHospital refuses one with a hospital number, a care team row or a doctor link, and says which", () => {
   const ctx = fakeCtx();
   const token = loginAs(ctx, "Pim", "pim123");
-  // HOS01 has HN01/HN03 (HospitalNumbers), CT01/CT03 (CareTeam) and DH01 (DoctorHospitals).
+  // HOS01 has HN01/HN03 (HospitalNumbers), CT01 (CareTeam) and DH01 (DoctorHospitals).
   const r = handle({ action: "deleteHospital", token, hospitalId: "HOS01" }, ctx);
   assert.equal(r.ok, false);
   assert.equal(r.error.code, "CONFLICT");
@@ -698,8 +698,9 @@ git commit -m "feat: delete an unused medicine, and give doctors a photo"
 - Produces, all exported from `js/viewmodel.js`:
   - `medicineLibraryModel(idx)` → `{rows: [{medicine, name, strength, photoUrl, takenBy: string[], canDelete: boolean}]}`, sorted by `name` then `strength`, locale-aware.
   - `medicineLibraryDetail(idx, medicineId)` → `{medicine, name, strength, unit, photos: [{label, url}], takenBy: [{userId, displayName}], canDelete}` or `null`.
-  - `doctorLibraryModel(idx)` → `{rows: [{doctor, photoUrl, hospitalNames: string[], canDelete}]}`, sorted by `doctor.name`, locale-aware.
-  - `hospitalLibraryModel(idx)` → `{rows: [{hospital, doctorNames: string[], canDelete}]}`, sorted by `hospital.name`, locale-aware.
+  - `doctorLibraryModel(idx)` → `{rows: [{doctor, photoUrl, hospitalNames: string[], canDelete}]}`, rows sorted by `doctor.name` and **`hospitalNames` itself sorted by name**, both locale-aware.
+  - `hospitalLibraryModel(idx)` → `{rows: [{hospital, doctorNames: string[], canDelete}]}`, rows sorted by `hospital.name` and **`doctorNames` itself sorted by name**, both locale-aware.
+  - In `medicineLibraryModel`, `takenBy` holds display names sorted the same way.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -762,7 +763,17 @@ test("hospitalLibraryModel lists the doctors at each hospital, and blocks deleti
 });
 ```
 
-Write `libraryIdx()` in this file. Base it on the shapes in `tests/fixtures.js` (`fixtureTables()`), adding `MED99`, `DOC99` and `HOS99` as unreferenced spares. The medicine forms matter: MED01 is `Tablet`.
+Write `libraryIdx()` in this file. **Do not copy `fixtureTables()` unchanged** — every `brand_name` in it is blank, and the assertions above need brands. Build a boot object containing exactly this, which is what those assertions were written against:
+
+- **Medicines** — `MED01` generic `Amlodipine`, brand **`Norvasc`**, strength `5 mg`, form `Tablet`, with `photo_pill_front` set to a Drive link and the other four photo columns blank; `MED02` generic `Metformin`, brand **`Glucophage`**, strength `500 mg`, form `Tablet`; `MED05` generic `Vitamin C`, **no brand**, form `Tablet`; `MED99` generic `Spare`, no brand, form `Tablet`, referenced by nothing.
+- **Prescriptions** — one Active for `U01` on `MED01`, one **Stopped** for `U01` on `MED05` (a stopped course is still history, so it must block deleting). Nothing references `MED99`.
+- **Doctors** — `DOC01` `Dr. Somchai K.`; `DOC99` `Dr. Spare`, referenced by nothing.
+- **Hospitals** — `HOS01` `Riverside General Hospital`; `HOS02` `Northgate Kidney Center`; `HOS99` `Spare Clinic`, referenced by nothing.
+- **DoctorHospitals** — `DOC01` at both `HOS01` and `HOS02`, in that order, so the sort is doing real work when the test expects Northgate before Riverside.
+- **CareTeam / HospitalNumbers** — at least one row each pointing at `HOS01`, so it cannot be deleted.
+- **people** — `U01` with `display_name` `Dad`.
+
+`indexBoot` also requires `dose_log`, `doses` and `changes`; empty arrays are fine for all three.
 
 - [ ] **Step 2: Run to verify they fail**
 
