@@ -146,6 +146,17 @@ test("doctorLibraryModel lists the hospitals each doctor works at, and blocks de
   assert.equal(spare.canDelete, true);
 });
 
+// F2: the reference the first cut of this file missed. A prescription moved to another doctor
+// leaves change rows still naming the first one, and the server refuses to delete a doctor named
+// there. A model that answers canDelete: true draws a Delete button the server will refuse --
+// which on a phone reads as the app being broken, not as a rule being kept.
+test("doctorLibraryModel blocks deleting a doctor named only on a change already recorded", () => {
+  const idx = libraryIdx();
+  idx.boot.changes = [{ change_id: "CH01", prescription_id: "RX01", doctor_id: "DOC99", change_type: "Started" }];
+  const { rows } = doctorLibraryModel(idx);
+  assert.equal(rows.find(r => r.doctor.doctor_id === "DOC99").canDelete, false, "the server refuses this one");
+});
+
 test("hospitalLibraryModel lists the doctors at each hospital, and blocks deleting one in use", () => {
   const idx = libraryIdx();
   const { rows } = hospitalLibraryModel(idx);

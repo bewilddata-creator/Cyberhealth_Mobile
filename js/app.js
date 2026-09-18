@@ -921,10 +921,15 @@ function deletePrescription(prescriptionId) {
 // sends nothing at all -- the question comes before the request, never after it. The button is
 // only drawn when the view model says the server would allow it, and the server checks again, so
 // a "no" here is a mis-tap being caught rather than a rule being enforced.
+//
+// Each question names exactly what is deleted and then why nobody's record changes -- never a
+// bare "nothing is lost". Something IS lost: the row itself and its photos, which is the whole
+// point of the button. This is the last thing read before an action nobody here can undo, so it
+// says what will happen rather than what is comforting.
 
 function deleteLibraryMedicine(medicineId) {
   const name = medicineNameOf(medicineId);
-  const ask = `Remove ${name} from the family's medicine list? Nobody takes it and nobody has taken it, so no record is lost. Its photos go too. This can't be undone.`;
+  const ask = `Remove ${name} from the family's medicine list? Its details and any photos of it are deleted for everyone. Nobody takes it and nobody has taken it, so no one's medicine record changes. This can't be undone.`;
   if (!confirm(ask)) return;
   return runAction("deleteMedicine", { medicineId },
     r => (r && r.warnings && r.warnings.length ? r.warnings[0] : `${name} is off the medicine list.`),
@@ -936,17 +941,21 @@ function deleteLibraryMedicine(medicineId) {
 
 function deleteDoctor(doctorId) {
   const name = doctorNameOf(doctorId);
-  const ask = `Remove ${name} from the family's doctor list? No medicine names them and they're not on anyone's care team, so no record is lost. Where they see patients is forgotten too. This can't be undone.`;
+  const ask = `Remove ${name} from the family's doctor list? Their details, their photo and the list of hospitals they work at are deleted for everyone. No medicine, care team or recorded change names them, so no one's record changes. This can't be undone.`;
   if (!confirm(ask)) return;
-  return runAction("deleteDoctor", { doctorId }, `${name} is off the doctor list.`, () => {
-    dropForm();
-    go("doctorLibrary");
-  });
+  // Like deleteMedicine, the server answers with a warning when it could not bin the photo -- say
+  // that instead of a clean "they're gone", or the file sits in Drive with nobody told.
+  return runAction("deleteDoctor", { doctorId },
+    r => (r && r.warnings && r.warnings.length ? r.warnings[0] : `${name} is off the doctor list.`),
+    () => {
+      dropForm();
+      go("doctorLibrary");
+    });
 }
 
 function deleteHospital(hospitalId) {
   const name = hospitalNameOf(hospitalId);
-  const ask = `Remove ${name} from the family's list of places? Nobody's hospital number, care team or doctor points at it, so no record is lost. This can't be undone.`;
+  const ask = `Remove ${name} from the family's list of places? Its details, phone number and address are deleted for everyone. Nobody's hospital number, care team or doctor points at it, so no one's record changes. This can't be undone.`;
   if (!confirm(ask)) return;
   return runAction("deleteHospital", { hospitalId }, `${name} is off the list.`, () => {
     dropForm();

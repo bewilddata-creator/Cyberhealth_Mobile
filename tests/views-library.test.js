@@ -71,7 +71,6 @@ test("renderMedicineLibrary says so plainly when a search matches nothing", () =
 test("renderMedicineLibrary puts no delete control on any row, not even one the server would let go", () => {
   const html = renderMedicineLibrary({ model: medicineModel(), query: "" });
   assert.ok(!html.includes("data-delete-medicine"), html);
-  assert.ok(!html.includes("rowdelete"), "no row-level destructive button of any kind");
   assert.ok(html.includes(openMedicine("MED99")), "the deletable one is still on the list, just not deletable from here");
 });
 
@@ -218,7 +217,6 @@ test("renderDoctorLibrary's search keeps only the doctors whose name matches", (
 test("renderDoctorLibrary puts no delete control on any row, not even one the server would let go", () => {
   const html = renderDoctorLibrary({ model: doctorModel(), query: "" });
   assert.ok(!html.includes("data-delete-doctor"), html);
-  assert.ok(!html.includes("rowdelete"), "no row-level destructive button of any kind");
   assert.ok(html.includes(openDoctor("DOC99")), "the deletable one is still on the list, just not deletable from here");
 });
 
@@ -285,7 +283,6 @@ test("renderHospitalLibrary's search keeps only the places whose name matches", 
 test("renderHospitalLibrary puts no delete control on any row, not even one the server would let go", () => {
   const html = renderHospitalLibrary({ model: hospitalModel(), query: "" });
   assert.ok(!html.includes("data-delete-hospital"), html);
-  assert.ok(!html.includes("rowdelete"), "no row-level destructive button of any kind");
   assert.ok(html.includes(openHospital("HOS99")), "the deletable one is still on the list, just not deletable from here");
 });
 

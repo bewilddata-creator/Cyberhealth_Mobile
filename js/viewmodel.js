@@ -420,10 +420,14 @@ function medicineIsReferenced(idx, medicineId) {
   return [...idx.prescriptions.values()].some(p => p.medicineId === medicineId);
 }
 function doctorIsReferenced(idx, doctorId) {
-  // deleteDoctor refuses on any Prescriptions.doctor_id or CareTeam.doctor_id row.
+  // deleteDoctor refuses on any Prescriptions.doctor_id, CareTeam.doctor_id or
+  // PrescriptionChanges.doctor_id row. The last one is easy to forget and costs the most: a
+  // prescription moved to another doctor still has history rows naming the old one, so the
+  // prescription no longer points at them but the record does.
   const inPrescriptions = [...idx.prescriptions.values()].some(p => p.doctorId === doctorId);
   const inCareTeam = (idx.boot.care_team || []).some(c => c.doctor_id === doctorId);
-  return inPrescriptions || inCareTeam;
+  const inChanges = (idx.boot.changes || []).some(c => c.doctor_id === doctorId);
+  return inPrescriptions || inCareTeam || inChanges;
 }
 function hospitalIsReferenced(idx, hospitalId) {
   // deleteHospital refuses on any HospitalNumbers, CareTeam or DoctorHospitals row.

@@ -118,6 +118,10 @@ function checkSheet() {
   };
   checkReferences_("Prescriptions", [["user_id", "Users"], ["medicine_id", "Medicines"], ["doctor_id", "Doctors"]]);
   checkReferences_("PrescriptionDoses", [["prescription_id", "Prescriptions"]]);
+  // A change row names the doctor who made the change. The app drops a doctor id it cannot find,
+  // so a history entry pointing at a deleted doctor loses the name silently rather than showing
+  // anything wrong -- which is exactly why it has to be said here.
+  checkReferences_("PrescriptionChanges", [["prescription_id", "Prescriptions"], ["doctor_id", "Doctors"]]);
   checkReferences_("CareTeam", [["user_id", "Users"], ["doctor_id", "Doctors"], ["hospital_id", "Hospitals"]]);
   checkReferences_("HospitalNumbers", [["user_id", "Users"], ["hospital_id", "Hospitals"]]);
   checkReferences_("DoctorHospitals", [["doctor_id", "Doctors"], ["hospital_id", "Hospitals"]]);

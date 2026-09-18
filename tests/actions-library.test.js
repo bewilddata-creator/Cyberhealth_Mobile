@@ -131,6 +131,40 @@ test("deleteDoctor removes one nothing points at, and takes their hospital links
   assert.equal(ctx.db.rows("DoctorHospitals").filter(dh => dh.doctor_id === id).length, 0, "a link is not a record of care");
 });
 
+// F2: the reference deleteDoctor used to miss. Reassigning a prescription to another doctor
+// leaves the change rows naming the first one -- deleting them then leaves a history entry
+// pointing at nobody, and the phone drops a name it cannot find, so the line quietly reads as if
+// no doctor had ever been involved. Nothing on screen would ever say the name had been lost.
+test("deleteDoctor refuses one still named on a change already recorded, and writes nothing", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Pim", "pim123");
+  const added = handle({ action: "addDoctor", token, fields: { name: "Dr. Nid P." } }, ctx);
+  const id = added.data.doctor_id;
+  assert.equal(handle({ action: "setDoctorHospitals", token, doctorId: id, hospitalIds: ["HOS01"] }, ctx).ok, true);
+  const med = handle({ action: "addMedicine", token, fields: { generic_name: "Losartan", strength: "50 mg", form: "Tablet" } }, ctx);
+  const rx = handle({
+    action: "addPrescription", token, userId: "U01", medicineId: med.data.medicine_id,
+    doctorId: id, frequency: "Daily", doses: [{ timeOfDay: "Morning", amount: 1 }],
+  }, ctx);
+  assert.equal(rx.ok, true, JSON.stringify(rx));
+  // Now hand the prescription to someone else: no Prescriptions row names the first doctor any
+  // more, but the "Started" change still does.
+  const moved = handle({
+    action: "changePrescriptionDose", token, prescriptionId: rx.data.prescription.prescription_id,
+    doctorId: "DOC01", doses: [{ timeOfDay: "Morning", amount: 2 }],
+  }, ctx);
+  assert.equal(moved.ok, true, JSON.stringify(moved));
+  assert.equal(ctx.db.rows("Prescriptions").some(p => p.doctor_id === id), false, "no prescription points at them now");
+  assert.equal(ctx.db.rows("PrescriptionChanges").some(c => c.doctor_id === id), true, "but a recorded change still does");
+
+  const r = handle({ action: "deleteDoctor", token, doctorId: id }, ctx);
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.equal(r.error.code, "CONFLICT");
+  assert.match(r.error.message, /change|history/i);
+  assert.equal(ctx.db.rows("Doctors").filter(d => d.doctor_id === id).length, 1);
+  assert.equal(ctx.db.rows("DoctorHospitals").filter(dh => dh.doctor_id === id).length, 1, "a refused delete removes nothing at all");
+});
+
 test("setDoctorHospitals replaces the whole set, adding and removing in one go", () => {
   const ctx = fakeCtx();
   const token = loginAs(ctx, "Pim", "pim123");
@@ -217,6 +251,40 @@ test("deleteMedicine attempts every photo's trash even after one fails, and warn
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.ok(r.data.warnings.length > 0, "a failed trash must not fail the delete");
   assert.deepEqual(attempted.sort(), [up1.data.url, up2.data.url].sort(), "every photo must be attempted, not just the first");
+});
+
+// F1: deleteDoctor landed one commit before doctors had photos. A portrait is readable by anyone
+// who has the link, which is the whole reason a photo is binned when the thing it belongs to goes
+// -- a doctor removed from the app with their photo left in Drive is only half removed, and
+// nothing says so.
+test("deleteDoctor trashes the doctor's photo", () => {
+  const ctx = fakeCtx();
+  const drive = withDrive(ctx);
+  const token = loginAs(ctx, "Pim", "pim123");
+  const added = handle({ action: "addDoctor", token, fields: { name: "Dr. Nid P." } }, ctx);
+  const id = added.data.doctor_id;
+  const up = handle({ action: "uploadDoctorPhoto", token, doctorId: id, dataUrl: JPEG }, ctx);
+  assert.equal(up.ok, true, JSON.stringify(up));
+  const r = handle({ action: "deleteDoctor", token, doctorId: id }, ctx);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(drive.trashed, [up.data.url]);
+});
+
+// F1, second half: same reasoning as removeDoctorPhoto below -- withDrive's trash always succeeds,
+// so only forcing it to fail proves the failure is a warning rather than a thrown error that
+// would refuse a delete already done.
+test("deleteDoctor's failed trash is a warning, not a failure", () => {
+  const ctx = fakeCtx();
+  withDrive(ctx);
+  const token = loginAs(ctx, "Pim", "pim123");
+  const added = handle({ action: "addDoctor", token, fields: { name: "Dr. Nid P." } }, ctx);
+  const id = added.data.doctor_id;
+  assert.equal(handle({ action: "uploadDoctorPhoto", token, doctorId: id, dataUrl: JPEG }, ctx).ok, true);
+  ctx.drive.trash = () => false;
+  const r = handle({ action: "deleteDoctor", token, doctorId: id }, ctx);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.ok(r.data.warnings.length > 0, "a failed trash must not fail the delete");
+  assert.equal(ctx.db.rows("Doctors").filter(d => d.doctor_id === id).length, 0, "the doctor is gone either way");
 });
 
 test("uploadDoctorPhoto stores the link on the doctor, and replacing trashes the old file", () => {

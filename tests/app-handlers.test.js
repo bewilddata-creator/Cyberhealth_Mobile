@@ -1347,8 +1347,12 @@ test("saying no to a library delete sends no request whatsoever", async () => {
   assert.match(confirms[0], /Spare/);
   assert.match(confirms[0], /can't be undone/);
   assert.match(confirms[1], /Dr\. Nobody/);
-  assert.match(confirms[1], /Where they see patients is forgotten/);
+  assert.match(confirms[1], /hospitals they work at/);
+  assert.match(confirms[1], /photo/, "the photo goes too, so the question has to say so");
   assert.match(confirms[2], /Lakeside Clinic/);
+  // F3: none of the three may promise "no record is lost" -- each one deletes the row it names,
+  // and this is the last sentence read before something nobody here can undo.
+  confirms.forEach(ask => assert.doesNotMatch(ask, /no record is lost|nothing is lost/i, ask));
   assert.equal(world.sent.length, 0, "a declined question must not reach the network at all");
   assert.ok(world.ctx.db.rows("Medicines").some(m => m.medicine_id === medicineId));
   assert.ok(world.ctx.db.rows("Doctors").some(d => d.doctor_id === doctorId));
@@ -1386,6 +1390,22 @@ test("saying yes removes the thing and goes back to the list it came from", asyn
   assert.equal(S.screen, "medicineLibrary");
   assert.equal(S.libraryMedicine, null);
   assert.match(S.toast, /Spare is off the medicine list/);
+});
+
+// F1: the server answers a doctor delete whose photo it could not bin with a warning, and a bare
+// "off the doctor list" would leave a portrait anyone with the link can open sitting in the
+// family's Drive with nobody told. Same handling as deleteMedicine's photos.
+test("a doctor delete whose photo could not be binned says so instead of a clean goodbye", async () => {
+  await fresh();
+  const doctorId = await addSpareDoctor();
+  await clickOn({ openDoctor: doctorId });
+  nextPickedFile = { name: "doc.jpg", type: "image/jpeg" };
+  await clickOn({ uploadDoctorPhoto: doctorId });
+  assert.match(world.ctx.db.rows("Doctors").find(d => d.doctor_id === doctorId).photo, /drive\.google\.com/);
+  world.ctx.drive.trash = () => false;
+  await clickOn({ deleteDoctor: doctorId });
+  assert.equal(world.ctx.db.rows("Doctors").some(d => d.doctor_id === doctorId), false, "the delete itself still landed");
+  assert.match(S.toast, /still in Drive/);
 });
 
 test("a delete the server refuses says why, and leaves the screen where it was", async () => {

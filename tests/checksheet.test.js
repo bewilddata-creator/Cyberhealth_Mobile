@@ -123,6 +123,24 @@ test("checkSheet names a broken DoctorHospitals reference", () => {
   assert.ok(problems.some(p => p.includes("DoctorHospitals") && p.includes("DH01") && p.includes("HOS-GONE")), problems.join("\n"));
 });
 
+// F2: a hand-edited Sheet can lose the doctor a recorded change names -- and nothing shows it,
+// because the phone drops a doctor id it cannot find and the history line simply stops saying who
+// prescribed it. The checker has to be the thing that notices.
+test("checkSheet names a change row pointing at a doctor or a prescription that is not there", () => {
+  const tables = clone(fixtureTables());
+  tables.PrescriptionChanges = tables.PrescriptionChanges.map(r => {
+    if (r.change_id === "CH01") return { ...r, doctor_id: "DOC-GONE" };
+    if (r.change_id === "CH03") return { ...r, prescription_id: "RX-GONE" };
+    return r;
+  });
+  const problems = runCheckSheet(tables);
+  assert.ok(problems.some(p => p.includes("PrescriptionChanges") && p.includes("CH01") && p.includes("DOC-GONE")), problems.join("\n"));
+  assert.ok(problems.some(p => p.includes("PrescriptionChanges") && p.includes("CH03") && p.includes("RX-GONE")), problems.join("\n"));
+  // CH04's doctor_id is blank on purpose (a course stopped with no doctor named) -- a blank is
+  // not a broken reference, and flagging it would train the admin to ignore this report.
+  assert.ok(!problems.some(p => p.includes("CH04")), problems.join("\n"));
+});
+
 test("checkSheet warns about an invalid Prescriptions row", () => {
   const tables = clone(fixtureTables());
   tables.Prescriptions = tables.Prescriptions.map(r => (r.prescription_id === "RX01" ? { ...r, frequency: "Bogus" } : r));

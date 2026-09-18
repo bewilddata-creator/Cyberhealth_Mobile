@@ -849,23 +849,40 @@ Object.assign(ACTIONS, {
   deleteDoctor(req, ctx) {
     requireUser(req, ctx);
     const doctorId = str(req.doctorId);
-    return ctx.lock(() => {
-      if (!ctx.db.rows("Doctors").some(d => str(d.doctor_id) === doctorId)) {
+    const doomed = ctx.lock(() => {
+      const row = ctx.db.rows("Doctors").find(d => str(d.doctor_id) === doctorId);
+      if (!row) {
         throw new AppError("BAD_INPUT", "That doctor isn't in the list any more. Refresh and try again.");
       }
       const held = referencesTo(ctx, [
         { tab: "Prescriptions", column: "doctor_id", value: doctorId, label: "a medicine someone takes" },
         { tab: "CareTeam", column: "doctor_id", value: doctorId, label: "someone's care team" },
+        // A change already recorded names the doctor who made it. Deleting them would leave that
+        // history entry pointing at nobody, and the phone drops a name it cannot find -- so the
+        // line would quietly read as if no doctor had ever been involved.
+        { tab: "PrescriptionChanges", column: "doctor_id", value: doctorId, label: "a change already recorded in someone's history" },
       ]);
       if (held.length) {
         throw new AppError("CONFLICT", `This doctor is still named on ${held.join(" and ")}, so they stay in the list. That keeps the records readable.`);
       }
+      // Read before the row is removed, exactly as deleteMedicine reads its photo columns first:
+      // a row object handed back by the Sheet after its row is gone is not something to rely on.
+      const url = str(row.photo);
       // A doctor-hospital link says where someone works, not that anyone was treated -- there is
       // no history in it to protect, so it goes with the doctor rather than blocking the delete.
       ctx.db.remove("DoctorHospitals", dh => str(dh.doctor_id) === doctorId);
       ctx.db.remove("Doctors", d => str(d.doctor_id) === doctorId);
-      return { deleted: true };
+      return url;
     });
+    // The portrait is binned after the lock is released, exactly as deleteMedicine does with its
+    // photos: the file is readable by anyone who has the link, so a doctor removed from the app
+    // with their photo left in Drive is only half removed. A trash that fails is a warning, never
+    // a failure -- the doctor is already gone, and refusing now would lose that for nothing.
+    const warnings = [];
+    if (doomed && !ctx.drive.trash(doomed)) {
+      warnings.push("The doctor was removed, but their photo is still in Drive. You can delete it there.");
+    }
+    return { deleted: true, warnings };
   },
 
   deleteMedicine(req, ctx) {
