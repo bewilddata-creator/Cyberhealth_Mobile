@@ -501,6 +501,13 @@ Object.assign(ACTIONS, {
       }
       const stamp = bangkokStamp(ctx.nowMs());
       const prescriptionId = ctx.newId("RX");
+      // The only case where a write to Prescriptions/PrescriptionDoses happens outside
+      // applyPrescriptionChange's mutate: there is no existing row for readPrescription to find
+      // yet, so the row must be created before applyPrescriptionChange can even run its "before"
+      // read. This is still safe: it happens inside the same ctx.lock, and the
+      // applyPrescriptionChange call just below re-reads these committed rows as its own
+      // "before"/"after" state (before === "" for a Started change) before writing history. Do
+      // not treat this as licence to write these tables elsewhere outside the chokepoint.
       ctx.db.append("Prescriptions", {
         prescription_id: prescriptionId, user_id: userId, medicine_id: medicineId,
         frequency: schedule.fields.frequency, every_n_days: schedule.fields.every_n_days,
@@ -545,6 +552,12 @@ Object.assign(ACTIONS, {
       if (!doses.ok) throw new AppError("BAD_INPUT", doses.reason);
       return applyPrescriptionChange(ctx, user, prescriptionId, "Schedule changed", () => {
         const patch = Object.assign({}, schedule.fields);
+        // validateScheduleFields defaults meal_timing to "Any time" when the caller omits
+        // mealTiming, which is right for a fresh prescription but wrong for a schedule-only
+        // edit: without this guard, changing a Daily prescription to Weekdays would silently
+        // erase an existing "After meal" instruction. Leave the column untouched unless the
+        // caller actually sent a mealTiming.
+        if (req.mealTiming === undefined) delete patch.meal_timing;
         if (req.doctorId !== undefined) patch.doctor_id = str(req.doctorId);
         ctx.db.update("Prescriptions", "prescription_id", prescriptionId, patch);
       }, { reason: req.reason });

@@ -145,6 +145,26 @@ test("addPrescription refuses a start date in the future", () => {
   assert.equal(r.error.code, "BAD_INPUT");
 });
 
+test("a viewer with no edit access cannot add a prescription for another person", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Dad", "dad123"); // U01 has no grant on U02's medicines
+  const before = ctx.db.rows("Prescriptions").length;
+  const r = handle({ action: "addPrescription", token, userId: "U02", medicineId: "MED05", frequency: "Daily", doses: [{ timeOfDay: "Noon", amount: 1, unit: "tablet" }] }, ctx);
+  assert.equal(r.ok, false);
+  assert.equal(r.error.code, "FORBIDDEN");
+  assert.equal(ctx.db.rows("Prescriptions").length, before, "no prescription is created when the caller can't edit this person's medicines");
+});
+
+test("a viewer with no edit access cannot delete another person's prescription, and it survives", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Dad", "dad123"); // U01 has no grant on U02's medicines
+  const r = handle({ action: "deletePrescription", token, prescriptionId: "RX05" }, ctx);
+  assert.equal(r.ok, false);
+  assert.equal(r.error.code, "FORBIDDEN");
+  assert.ok(ctx.db.rows("Prescriptions").some(x => x.prescription_id === "RX05"), "the prescription must survive a refused delete");
+  assert.equal(ctx.db.rows("PrescriptionDoses").filter(d => d.prescription_id === "RX05").length, 1, "its dose rows must survive too");
+});
+
 test("changePrescriptionSchedule replaces the schedule and records Schedule changed", () => {
   const ctx = fakeCtx();
   const token = loginAs(ctx, "Dad", "dad123");
@@ -157,6 +177,25 @@ test("changePrescriptionSchedule replaces the schedule and records Schedule chan
   assert.equal(rx.every_n_days, "", "the every-N fields are cleared, not left stale");
   const rows = ctx.db.rows("PrescriptionChanges").filter(c => c.prescription_id === "RX03");
   assert.equal(rows[rows.length - 1].change_type, "Schedule changed");
+});
+
+test("changePrescriptionSchedule leaves meal_timing untouched when the caller doesn't send one", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Dad", "dad123");
+  // RX01 is "After meal" in the fixture. A frequency-only change must not erase that.
+  const r = handle({ action: "changePrescriptionSchedule", token, prescriptionId: "RX01", frequency: "Weekdays", weekdays: ["Mon", "Thu"] }, ctx);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const rx = ctx.db.rows("Prescriptions").find(x => x.prescription_id === "RX01");
+  assert.equal(rx.meal_timing, "After meal", "a schedule-only edit must not silently erase the meal timing");
+});
+
+test("changePrescriptionSchedule does change meal_timing when the caller sends one", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Dad", "dad123");
+  const r = handle({ action: "changePrescriptionSchedule", token, prescriptionId: "RX01", frequency: "Daily", mealTiming: "Before meal" }, ctx);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const rx = ctx.db.rows("Prescriptions").find(x => x.prescription_id === "RX01");
+  assert.equal(rx.meal_timing, "Before meal");
 });
 
 test("switching to Every N days and back to Daily clears count_from, leaving no stale field", () => {
