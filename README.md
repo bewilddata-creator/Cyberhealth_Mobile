@@ -111,7 +111,15 @@ going to paste in the code from this project's `apps-script/` folder.
    ```json
    {
      "timeZone": "Asia/Bangkok",
-     "dependencies": {},
+     "dependencies": {
+       "enabledAdvancedServices": [
+         {
+           "userSymbol": "Drive",
+           "serviceId": "drive",
+           "version": "v3"
+         }
+       ]
+     },
      "exceptionLogging": "STACKDRIVER",
      "runtimeVersion": "V8",
      "oauthScopes": [
@@ -148,6 +156,15 @@ going to paste in the code from this project's `apps-script/` folder.
    Because these are written down here, the script asks for exactly this
    and nothing more — a later release that needs something new has to say
    so in this list, where you can see it.
+
+   The `dependencies` part switches on Google's **Drive API v3** service.
+   **You don't have to click anything for this** — pasting the manifest is
+   what turns it on, and after you save you'll see "Drive API" appear under
+   **Services** in the left sidebar. (If you're curious why: Apps Script's
+   friendlier built-in Drive shortcut only works with the wide "all of your
+   Drive files" permission, so the app talks to Drive the longer way round
+   in order to get by with the narrow one. Nothing about that changes what
+   you do.)
 
 3. **Paste in the eleven code files.** In this project's `apps-script/`
    folder there are eleven `.gs` files: `Access.gs`, `Actions.gs`,
@@ -315,6 +332,16 @@ second folder. Do it at a quiet time of day all the same.
    folder any more, so it can't do this for you. (Photos already showing in
    the app keep showing: the links in the Sheet still work — the app simply
    can't change or delete those files from now on.)
+
+   **One quirk to expect with those older photos.** If someone replaces or
+   removes one of them in the app, it will save the new photo correctly and
+   then say *"the old one is still in Drive. You can delete it there."*
+   That message is doing its job: the app is no longer allowed to bin a
+   file it didn't create, so it tells you instead of failing. Delete the
+   old file in Drive yourself when you see that, or don't — nothing is
+   broken either way. Photos taken from **this release onwards** are made
+   by the app, so it tidies those up by itself and the message won't
+   appear for them.
 5. **Deploy a new version** — steps 4 and 5 above. Until you do, the family
    is still on the old code and the old permission.
 6. **Optional, once everything works: take the old permission away.** Go to

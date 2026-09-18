@@ -133,77 +133,131 @@ export const fakeContentService = {
   },
 };
 
-// A fake DriveApp with one root folder, whose id is the value the Settings tab's
-// photo_folder_id holds ("SAMPLE_FOLDER_ID" in tests/fixtures.js). Folders and files are kept
-// on the returned object (.folders, .files) so a test can see exactly what was created,
-// shared and trashed. Only the calls apps-script/Drive.gs makes are implemented.
+// A fake of the ADVANCED Drive service (Drive API v3), which is what apps-script/Drive.gs
+// calls -- Drive.Files.create/get/list/update and Drive.Permissions.create. Not DriveApp: Apps
+// Script gates its built-in services on the declared scopes before Drive sees the request, and
+// DriveApp is not documented for .../auth/drive.file, which is the whole reason this project
+// uses the advanced service.
 //
-// Pass null for rootId to get a Drive where that folder does NOT exist -- which is what the
-// .../auth/drive.file scope looks like from inside the script for any folder it did not make
-// itself: getFolderById throws rather than handing one back. That is both the "nothing is set
-// up yet" case and the "the id in Settings points at a folder made by hand" case.
-export function fakeDriveApp(rootId = "SAMPLE_FOLDER_ID") {
-  const folders = new Map();
-  const files = new Map();
+// Everything lives in one `items` map, the way one Drive does, with `folders` and `files` views
+// over it so a test can see exactly what was created, shared and trashed. Records are plain v3
+// File resources: { id, name, mimeType, parents, trashed, sharing, blob }.
+//
+// FAITHFULNESS MATTERS HERE. This repo has been bitten more than once by a double that was
+// kinder than the real service, so this one copies the behaviour that actually catches bugs:
+//   * A file this app may not touch answers 404, never 403 and never null -- Drive returns
+//     "not found" for a file that exists but is not yours, so that an app cannot probe someone
+//     else's Drive. apps-script/Drive.gs leans on exactly that distinction.
+//   * Errors carry .details.code, like GoogleJsonResponseException, because driveNotFound_
+//     reads that and nothing else.
+//   * Files.list really parses the query it is handed, and THROWS on a clause it does not
+//     understand rather than quietly matching everything -- a fake that ignores `q` would pass
+//     a Drive.gs that searched for the wrong thing.
+//
+// Pass null for rootId to get a Drive that does not hold that folder, which is what drive.file
+// looks like from inside the script for any folder it did not make itself. That is both the
+// "nothing is set up yet" case and the "the id in Settings was pasted in by hand" case.
+export const FOLDER_MIME = "application/vnd.google-apps.folder";
+
+function driveError(code, message) {
+  const err = new Error(message);
+  err.details = { code, message };
+  return err;
+}
+
+// The clauses apps-script/Drive.gs actually builds, and only those. Anything else is a bug in
+// the caller or a gap in this fake, and either way must be loud.
+function parseQuery(q) {
+  const clauses = String(q == null ? "" : q).split(" and ");
+  const want = { parent: null, name: null, mimeType: null, trashed: null };
+  const literal = /^'((?:[^'\\]|\\.)*)'$/;
+  const unescape = raw => raw.replace(/\\(.)/g, "$1");
+  for (const clause of clauses) {
+    let m;
+    if ((m = /^(.+) in parents$/.exec(clause)) && literal.test(m[1])) {
+      want.parent = unescape(literal.exec(m[1])[1]);
+    } else if ((m = /^name = (.+)$/.exec(clause)) && literal.test(m[1])) {
+      want.name = unescape(literal.exec(m[1])[1]);
+    } else if ((m = /^mimeType = (.+)$/.exec(clause)) && literal.test(m[1])) {
+      want.mimeType = unescape(literal.exec(m[1])[1]);
+    } else if (/^trashed = (true|false)$/.test(clause)) {
+      want.trashed = /true/.test(clause);
+    } else {
+      throw driveError(400, `fake Drive: unsupported query clause ${JSON.stringify(clause)}`);
+    }
+  }
+  return want;
+}
+
+export function fakeDrive(rootId = "SAMPLE_FOLDER_ID") {
+  const items = new Map();
   let seq = 0;
   // A real Drive id is a long opaque string, and DriveStore.trashByUrl (apps-script/Drive.gs)
   // only recognises one of 10 characters or more inside a URL -- a short fake id would make
   // every "trash the old photo" path quietly report a warning instead of trashing anything.
   const driveId = (kind, n) => `${kind}${n}_0Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op8Qr`;
 
-  function makeFolder(id, name, parentId) {
-    const folder = {
-      id, name, parentId,
-      getId: () => id,
-      getName: () => name,
-      getFoldersByName(childName) {
-        const hits = [...folders.values()].filter(f => f.parentId === id && f.name === childName);
-        let i = 0;
-        return { hasNext: () => i < hits.length, next: () => hits[i++] };
-      },
-      createFolder(childName) {
-        const child = makeFolder(driveId("FOLDER", ++seq), childName, id);
-        folders.set(child.id, child);
-        return child;
-      },
-      createFile(blob) {
-        const fileId = driveId("FILE", ++seq);
-        const file = {
-          id: fileId, folderId: id, blob, trashed: false, sharing: null,
-          getId: () => fileId,
-          getName: () => blob.getName(),
-          setSharing: (access, permission) => { file.sharing = [access, permission]; return file; },
-          setTrashed: value => { file.trashed = value; return file; },
-        };
-        files.set(fileId, file);
-        return file;
-      },
-    };
-    return folder;
-  }
+  const view = pred => {
+    const map = new Map();
+    for (const item of items.values()) if (pred(item)) map.set(item.id, item);
+    return map;
+  };
+  const mustGet = id => {
+    const item = items.get(id);
+    // 404, not 403: see the note above.
+    if (!item) throw driveError(404, `File not found: ${id}.`);
+    return item;
+  };
 
-  if (rootId) folders.set(rootId, makeFolder(rootId, "CyberHealth photos", null));
+  if (rootId) items.set(rootId, { id: rootId, name: "CyberHealth photos", mimeType: FOLDER_MIME, parents: [], trashed: false, sharing: null, blob: null });
+
   return {
-    folders,
-    files,
-    Access: { ANYONE_WITH_LINK: "ANYONE_WITH_LINK" },
-    Permission: { VIEW: "VIEW" },
-    // DriveApp.createFolder: a new folder at the top level of My Drive. Always allowed under
-    // drive.file -- making a file is exactly what that scope is for.
-    createFolder(name) {
-      const folder = makeFolder(driveId("FOLDER", ++seq), name, null);
-      folders.set(folder.id, folder);
-      return folder;
+    items,
+    get folders() { return view(i => i.mimeType === FOLDER_MIME); },
+    get files() { return view(i => i.mimeType !== FOLDER_MIME); },
+    Files: {
+      // v3 create(resource) for metadata, create(resource, mediaData) with content.
+      create(resource, blob) {
+        const parents = (resource && resource.parents) || [];
+        parents.forEach(mustGet); // a parent this app cannot see is a 404, same as Drive
+        const mimeType = (resource && resource.mimeType) || (blob && blob.getContentType && blob.getContentType()) || "application/octet-stream";
+        const id = driveId(mimeType === FOLDER_MIME ? "FOLDER" : "FILE", ++seq);
+        // Array.from, not .slice(): the caller is code running in a node:vm realm, whose Array
+        // is a different constructor, and a test's deepEqual against a plain [] would fail on
+        // prototype identity alone.
+        const item = { id, name: (resource && resource.name) || "", mimeType, parents: Array.from(parents), trashed: false, sharing: null, blob: blob || null };
+        items.set(id, item);
+        // v3 answers with the created resource. Only the fields Drive.gs reads are promised.
+        return { id: item.id, name: item.name, mimeType: item.mimeType };
+      },
+      get(fileId) {
+        const item = mustGet(fileId);
+        return { id: item.id, name: item.name, mimeType: item.mimeType, trashed: item.trashed };
+      },
+      list(options) {
+        const want = parseQuery(options && options.q);
+        const hits = [...items.values()].filter(item => {
+          if (want.parent !== null && item.parents.indexOf(want.parent) < 0) return false;
+          if (want.name !== null && item.name !== want.name) return false;
+          if (want.mimeType !== null && item.mimeType !== want.mimeType) return false;
+          if (want.trashed !== null && item.trashed !== want.trashed) return false;
+          return true;
+        });
+        return { files: hits.map(item => ({ id: item.id, name: item.name })) };
+      },
+      update(resource, fileId) {
+        const item = mustGet(fileId);
+        if (resource && Object.prototype.hasOwnProperty.call(resource, "trashed")) item.trashed = !!resource.trashed;
+        if (resource && resource.name != null) item.name = resource.name;
+        return { id: item.id, name: item.name, trashed: item.trashed };
+      },
     },
-    getFolderById(id) {
-      const folder = folders.get(id);
-      if (!folder) throw new Error(`fake Drive: no folder with id ${id}`); // same shape as DriveApp: it throws, it does not return null
-      return folder;
-    },
-    getFileById(id) {
-      const file = files.get(id);
-      if (!file) throw new Error(`fake Drive: no file with id ${id}`);
-      return file;
+    Permissions: {
+      create(resource, fileId) {
+        const item = mustGet(fileId);
+        item.sharing = [resource.type, resource.role];
+        return { id: "perm" + (++seq), type: resource.type, role: resource.role };
+      },
     },
   };
 }

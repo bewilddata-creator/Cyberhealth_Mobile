@@ -202,8 +202,23 @@ function checkSheet() {
   // upload will refuse until the box is emptied and setUpPhotoFolder has been run.
   const folderSetting = rowsOf("Settings").find(row => String(row.key || "").trim() === "photo_folder_id");
   const folderId = folderSetting ? String(folderSetting.value || "").trim() : "";
-  if (folderId && !PhotoFolder.open(folderId)) {
-    problems.push(`Settings: the app cannot open the photo folder in photo_folder_id ("${folderId}"). Empty that box on the Settings tab, then run setUpPhotoFolder to make a folder the app can use.`);
+  if (folderId) {
+    // PhotoFolder.open answers null only for "Drive says there is no such folder for this app",
+    // and throws for anything else. A checker must not turn a permission problem into the
+    // hand-made-folder advice: clearing the cell would not fix it, and the real error would
+    // then wait to surprise somebody on a phone. So report what actually happened.
+    let folder = null;
+    let failed = "";
+    try {
+      folder = PhotoFolder.open(folderId);
+    } catch (e) {
+      failed = String((e && e.message) || e);
+    }
+    if (failed) {
+      problems.push(`Settings: checking the photo folder in photo_folder_id ("${folderId}") did not work: ${failed}`);
+    } else if (!folder) {
+      problems.push(`Settings: the app cannot open the photo folder in photo_folder_id ("${folderId}"). Empty that box on the Settings tab, then run setUpPhotoFolder to make a folder the app can use.`);
+    }
   }
 
   // Sharing: section and access are typed by hand, so a typo here silently grants nothing.

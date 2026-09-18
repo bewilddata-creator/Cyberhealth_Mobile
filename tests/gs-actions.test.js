@@ -1,14 +1,14 @@
 // Drives the new write actions through the REAL generated apps-script/*.gs files: every .gs
 // loaded into one node:vm context, called through doPost only, against fake Google services.
 // The rest of the suite runs the ES modules directly against dev/memory-db.js; this file is
-// what proves the same code still works when it is SheetDb, DriveApp and a JSON request body.
+// what proves the same code still works when it is SheetDb, the Drive API and a JSON request body.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import vm from "node:vm";
 import { fixtureTables } from "./fixtures.js";
-import { fakeSpreadsheetApp, fakePropertiesService, fakeCacheService, fakeLockService, fakeUtilities, fakeContentService, fakeDriveApp } from "./gs-sheet-fake.js";
+import { fakeSpreadsheetApp, fakePropertiesService, fakeCacheService, fakeLockService, fakeUtilities, fakeContentService, fakeDrive } from "./gs-sheet-fake.js";
 
 const JPEG = "data:image/jpeg;base64,/9j/4AAQSkZJRg==";
 
@@ -22,15 +22,16 @@ function loadGs() {
 
 // Every Google service liveCtx_() (apps-script/Code.gs) reaches for. The Sheet starts as the
 // shared v2 fixture, whose Settings tab points photo_folder_id at SAMPLE_FOLDER_ID -- the same
-// id fakeDriveApp() gives its root folder.
-function installFakes(context, tables = fixtureTables(), drive = fakeDriveApp()) {
+// id fakeDrive() gives its root folder. The fake is of the ADVANCED Drive service (v3), which
+// is what apps-script/Drive.gs calls -- see tests/gs-sheet-fake.js for why it is not DriveApp.
+function installFakes(context, tables = fixtureTables(), drive = fakeDrive()) {
   context.SpreadsheetApp = fakeSpreadsheetApp(tables);
   context.PropertiesService = fakePropertiesService();
   context.CacheService = fakeCacheService();
   context.LockService = fakeLockService;
   context.Utilities = fakeUtilities;
   context.ContentService = fakeContentService;
-  context.DriveApp = drive;
+  context.Drive = drive;
   return context;
 }
 
@@ -186,13 +187,13 @@ test("the real .gs files upload a photo through doPost and store the Drive link"
   assert.match(r.data.url, /drive\.google\.com/);
   assert.deepEqual(r.data.warnings, []);
 
-  const created = [...context.DriveApp.files.values()];
+  const created = [...context.Drive.files.values()];
   assert.equal(created.length, 1);
-  assert.equal(created[0].getName(), "box.jpg");
-  assert.deepEqual(created[0].sharing, ["ANYONE_WITH_LINK", "VIEW"], "the file is readable by anyone with the link, or the phone cannot show it");
-  const folder = context.DriveApp.folders.get(created[0].folderId);
+  assert.equal(created[0].name, "box.jpg");
+  assert.deepEqual(created[0].sharing, ["anyone", "reader"], "the file is readable by anyone with the link, or the phone cannot show it");
+  const folder = context.Drive.folders.get(created[0].parents[0]);
   assert.equal(folder.name, "MED01 Amlodipine 5 mg", "each medicine gets its own folder under the configured root");
-  assert.equal(folder.parentId, "SAMPLE_FOLDER_ID");
+  assert.deepEqual(folder.parents, ["SAMPLE_FOLDER_ID"]);
   assert.equal(gridRows(context, "Medicines").find(m => m.medicine_id === "MED01").photo_box, r.data.url);
 });
 
@@ -204,7 +205,7 @@ test("the real .gs files replace and then remove a photo, trashing exactly the o
   const second = post(context, { action: "uploadMedicinePhoto", token, medicineId: "MED01", slot: "box", dataUrl: JPEG });
   assert.equal(second.ok, true, JSON.stringify(second));
   assert.deepEqual(second.data.warnings, []);
-  const files = [...context.DriveApp.files.values()];
+  const files = [...context.Drive.files.values()];
   assert.equal(files.length, 2, "the new file is created before the old one is trashed");
   assert.deepEqual(files.map(f => f.trashed), [true, false], "only the file the column pointed at is trashed");
   assert.equal(gridRows(context, "Medicines").find(m => m.medicine_id === "MED01").photo_box, second.data.url);
@@ -216,7 +217,7 @@ test("the real .gs files replace and then remove a photo, trashing exactly the o
   assert.equal(removed.ok, true, JSON.stringify(removed));
   assert.deepEqual(removed.data.warnings, []);
   assert.equal(gridRows(context, "Medicines").find(m => m.medicine_id === "MED01").photo_box, "");
-  assert.deepEqual([...context.DriveApp.files.values()].map(f => f.trashed), [true, true]);
+  assert.deepEqual([...context.Drive.files.values()].map(f => f.trashed), [true, true]);
 });
 
 test("a photo for a medicine that is not in the Sheet is refused before anything reaches Drive", () => {
@@ -226,7 +227,7 @@ test("a photo for a medicine that is not in the Sheet is refused before anything
   const r = post(context, { action: "uploadMedicinePhoto", token, medicineId: "MED99", slot: "box", dataUrl: JPEG });
   assert.equal(r.ok, false);
   assert.equal(r.error.code, "BAD_INPUT");
-  assert.equal(context.DriveApp.files.size, 0, "no orphan file is left in the family's Drive");
+  assert.equal(context.Drive.files.size, 0, "no orphan file is left in the family's Drive");
 });
 
 // ---- the photo folder the app makes for itself ----
@@ -256,16 +257,16 @@ function settingValue(context, key) {
 
 test("setUpPhotoFolder makes the folder, writes its id into Settings, and says where it is", () => {
   const context = loadGs();
-  installFakes(context, tablesWithNoPhotoFolder(), fakeDriveApp(null));
+  installFakes(context, tablesWithNoPhotoFolder(), fakeDrive(null));
   const log = runLogging(context, "setUpPhotoFolder");
 
-  const made = [...context.DriveApp.folders.values()];
+  const made = [...context.Drive.folders.values()];
   assert.equal(made.length, 1, "exactly one folder, at the top level of My Drive");
-  assert.equal(made[0].getName(), "CyberHealth Photos");
-  assert.equal(made[0].parentId, null);
-  assert.equal(settingValue(context, "photo_folder_id"), made[0].getId(), "the admin never has to copy the id");
+  assert.equal(made[0].name, "CyberHealth Photos");
+  assert.deepEqual(made[0].parents, [], "at the top level of My Drive, where the admin can find it");
+  assert.equal(settingValue(context, "photo_folder_id"), made[0].id, "the admin never has to copy the id");
   assert.match(log, /CyberHealth Photos/);
-  assert.ok(log.includes(`https://drive.google.com/drive/folders/${made[0].getId()}`), log);
+  assert.ok(log.includes(`https://drive.google.com/drive/folders/${made[0].id}`), log);
   assert.match(log, /move it|drag the folder/i, "the admin is told they may move it");
 });
 
@@ -273,20 +274,20 @@ test("setUpPhotoFolder adds the photo_folder_id row when the Settings tab has no
   const tables = fixtureTables();
   tables.Settings = tables.Settings.filter(r => r.key !== "photo_folder_id");
   const context = loadGs();
-  installFakes(context, tables, fakeDriveApp(null));
+  installFakes(context, tables, fakeDrive(null));
   runLogging(context, "setUpPhotoFolder");
-  const made = [...context.DriveApp.folders.values()][0];
-  assert.equal(settingValue(context, "photo_folder_id"), made.getId());
+  const made = [...context.Drive.folders.values()][0];
+  assert.equal(settingValue(context, "photo_folder_id"), made.id);
 });
 
 test("setUpPhotoFolder run twice changes nothing the second time", () => {
   const context = loadGs();
-  installFakes(context, tablesWithNoPhotoFolder(), fakeDriveApp(null));
+  installFakes(context, tablesWithNoPhotoFolder(), fakeDrive(null));
   runLogging(context, "setUpPhotoFolder");
   const firstId = settingValue(context, "photo_folder_id");
 
   const log = runLogging(context, "setUpPhotoFolder");
-  assert.equal(context.DriveApp.folders.size, 1, "no second folder");
+  assert.equal(context.Drive.folders.size, 1, "no second folder");
   assert.equal(settingValue(context, "photo_folder_id"), firstId);
   assert.match(log, /nothing to do/i);
 });
@@ -294,10 +295,10 @@ test("setUpPhotoFolder run twice changes nothing the second time", () => {
 test("setUpPhotoFolder refuses to replace a folder id it cannot open, and says what to do", () => {
   const context = loadGs();
   // The live Sheet today: an id pasted in by hand, pointing at a folder drive.file cannot reach.
-  installFakes(context, tablesWithNoPhotoFolder("MADE_BY_HAND"), fakeDriveApp(null));
+  installFakes(context, tablesWithNoPhotoFolder("MADE_BY_HAND"), fakeDrive(null));
   const log = runLogging(context, "setUpPhotoFolder");
 
-  assert.equal(context.DriveApp.folders.size, 0, "no second folder is made behind the admin's back");
+  assert.equal(context.Drive.folders.size, 0, "no second folder is made behind the admin's back");
   assert.equal(settingValue(context, "photo_folder_id"), "MADE_BY_HAND", "and the cell is left for them to clear");
   assert.match(log, /Settings tab/);
   assert.match(log, /photo_folder_id/);
@@ -306,29 +307,29 @@ test("setUpPhotoFolder refuses to replace a folder id it cannot open, and says w
 
 test("a photo uploaded before anyone ran setUpPhotoFolder makes the folder on the way through", () => {
   const context = loadGs();
-  installFakes(context, tablesWithNoPhotoFolder(), fakeDriveApp(null));
+  installFakes(context, tablesWithNoPhotoFolder(), fakeDrive(null));
   const token = loginAsTop(context);
   const r = post(context, { action: "uploadMedicinePhoto", token, medicineId: "MED01", slot: "box", dataUrl: JPEG });
   assert.equal(r.ok, true, JSON.stringify(r));
 
   const rootId = settingValue(context, "photo_folder_id");
   assert.ok(rootId, "the new folder's id was written into Settings, so the next upload finds it");
-  const root = context.DriveApp.folders.get(rootId);
-  assert.equal(root.getName(), "CyberHealth Photos");
-  const file = [...context.DriveApp.files.values()][0];
-  const medFolder = context.DriveApp.folders.get(file.folderId);
+  const root = context.Drive.folders.get(rootId);
+  assert.equal(root.name, "CyberHealth Photos");
+  const file = [...context.Drive.files.values()][0];
+  const medFolder = context.Drive.folders.get(file.parents[0]);
   assert.equal(medFolder.name, "MED01 Amlodipine 5 mg");
-  assert.equal(medFolder.parentId, rootId, "the medicine's folder sits inside the one the app just made");
+  assert.deepEqual(medFolder.parents, [rootId], "the medicine's folder sits inside the one the app just made");
   assert.equal(gridRows(context, "Medicines").find(m => m.medicine_id === "MED01").photo_box, r.data.url);
 
   // The second upload must reuse the folder rather than make another one.
   assert.equal(post(context, { action: "uploadMedicinePhoto", token, medicineId: "MED02", slot: "box", dataUrl: JPEG }).ok, true);
-  assert.equal([...context.DriveApp.folders.values()].filter(f => f.parentId === null).length, 1);
+  assert.equal([...context.Drive.folders.values()].filter(f => !f.parents.length).length, 1);
 });
 
 test("a photo upload against a folder id the app cannot open is refused in plain words", () => {
   const context = loadGs();
-  installFakes(context, tablesWithNoPhotoFolder("MADE_BY_HAND"), fakeDriveApp(null));
+  installFakes(context, tablesWithNoPhotoFolder("MADE_BY_HAND"), fakeDrive(null));
   const token = loginAsTop(context);
   const r = post(context, { action: "uploadMedicinePhoto", token, medicineId: "MED01", slot: "box", dataUrl: JPEG });
 
@@ -336,8 +337,8 @@ test("a photo upload against a folder id the app cannot open is refused in plain
   assert.equal(r.error.code, "BAD_INPUT");
   assert.match(r.error.message, /photo_folder_id/);
   assert.match(r.error.message, /setUpPhotoFolder/);
-  assert.equal(context.DriveApp.folders.size, 0, "no second folder: nobody is left wondering where the photos went");
-  assert.equal(context.DriveApp.files.size, 0);
+  assert.equal(context.Drive.folders.size, 0, "no second folder: nobody is left wondering where the photos went");
+  assert.equal(context.Drive.files.size, 0);
   assert.equal(settingValue(context, "photo_folder_id"), "MADE_BY_HAND", "clearing the cell stays a deliberate act");
   assert.equal(gridRows(context, "Medicines").find(m => m.medicine_id === "MED01").photo_box, "");
 });
@@ -355,7 +356,106 @@ test("removing a photo whose link was pasted in by hand warns instead of trashin
   assert.equal(r.data.warnings.length, 1, JSON.stringify(r.data.warnings));
   assert.match(r.data.warnings[0], /still in Drive/);
   assert.equal(gridRows(context, "Medicines").find(m => m.medicine_id === "MED01").photo_pill_front, "", "the app forgets it either way");
-  assert.equal([...context.DriveApp.files.values()].filter(f => f.trashed).length, 0);
+  assert.equal([...context.Drive.files.values()].filter(f => f.trashed).length, 0);
+});
+
+test("setUpPhotoFolder tells the truth about a permission problem instead of blaming the folder", () => {
+  const context = loadGs();
+  const drive = fakeDrive(null);
+  drive.Files.get = () => {
+    const err = new Error("Insufficient permissions for this file");
+    err.details = { code: 403, message: "Insufficient permissions for this file" };
+    throw err;
+  };
+  installFakes(context, tablesWithNoPhotoFolder("SOME_FOLDER"), drive);
+
+  // A 404 is "not a folder this app made", and emptying the Settings box fixes it. A 403 is
+  // "this app was never granted the permission", and emptying the box fixes nothing -- it would
+  // just send the admin off to clear a cell while the real error waited for somebody's phone.
+  let printed = "";
+  const realConsole = context.console;
+  context.console = { log: t => { printed += t; }, error: () => {} };
+  try {
+    assert.throws(() => vm.runInContext("setUpPhotoFolder", context)(), /Insufficient permissions/);
+  } finally {
+    context.console = realConsole;
+  }
+  assert.equal(printed, "", "no reassuring advice was printed over the top of a real failure");
+  assert.equal(context.Drive.folders.size, 0);
+  assert.equal(settingValue(context, "photo_folder_id"), "SOME_FOLDER");
+});
+
+test("the photo folder is found again when the medicine's name has an apostrophe in it", () => {
+  const context = loadGs();
+  installFakes(context);
+  // Drive search queries are single-quoted strings, so an unescaped apostrophe would either
+  // throw or -- worse -- match nothing, and every upload would make one more folder.
+  const name = "MED09 Bob's 5 mg";
+  const first = vm.runInContext(`DriveStore.folder("SAMPLE_FOLDER_ID", ${JSON.stringify(name)}).id`, context);
+  const second = vm.runInContext(`DriveStore.folder("SAMPLE_FOLDER_ID", ${JSON.stringify(name)}).id`, context);
+  assert.equal(second, first, "the second upload reuses the folder rather than making a twin");
+  assert.equal([...context.Drive.folders.values()].filter(f => f.name === name).length, 1);
+});
+
+// Belt and braces, not a bug fixed: Data.gs's SheetDb.rows() already trims every string cell,
+// so the key SheetSettings.set hands to update() is trimmed before it gets there either way.
+// This pins the behaviour the family actually depends on -- one row updated, never a second
+// one appended -- rather than the internals of how the key is matched.
+test("SheetSettings.set finds the row even when the key cell has spaces around it", () => {
+  const tables = fixtureTables();
+  tables.Settings = tables.Settings.map(r => (r.key === "photo_folder_id" ? { ...r, key: "  photo_folder_id  " } : r));
+  const context = loadGs();
+  installFakes(context, tables);
+  vm.runInContext('SheetSettings.set("photo_folder_id", "NEW_ID")', context);
+  assert.equal(gridRows(context, "Settings").length, 1, "the row was updated, not a second one appended");
+  assert.equal(vm.runInContext('SheetSettings.get("photo_folder_id")', context), "NEW_ID");
+});
+
+test("SheetSettings.set raises instead of reporting a write that did not happen", () => {
+  const context = loadGs();
+  installFakes(context);
+  // The failure this guards: update() answering false, the id never reaching the Sheet, and
+  // create() cheerfully reporting a folder that the next upload would then make again.
+  vm.runInContext("SheetDb.update = () => false;", context);
+  assert.throws(() => vm.runInContext('SheetSettings.set("photo_folder_id", "NEW_ID")', context), /photo_folder_id/);
+});
+
+test("a photo folder whose id the Sheet refused to take is binned, not left as a stray", () => {
+  const context = loadGs();
+  installFakes(context, tablesWithNoPhotoFolder(), fakeDrive(null));
+  vm.runInContext('SheetDb.update = () => { throw new AppError("SERVER", "the Sheet said no"); };', context);
+
+  assert.throws(() => vm.runInContext("setUpPhotoFolder", context)(), /the Sheet said no/);
+  // Nothing knows the folder exists, so leaving it behind would mean a twin on every re-run.
+  const live = [...context.Drive.folders.values()].filter(f => !f.trashed);
+  assert.deepEqual(live, [], "the half-made folder was cleaned up");
+  assert.equal(settingValue(context, "photo_folder_id"), "");
+});
+
+test("two first uploads at once share one folder: the id is re-read inside the lock", () => {
+  const context = loadGs();
+  installFakes(context, tablesWithNoPhotoFolder(), fakeDrive(null));
+  // The other phone got there first: it made its folder and wrote the id down in the moment
+  // between this request reading a blank cell and taking the lock. Re-reading inside the lock
+  // is what stops this one making a second folder nobody asked for.
+  let fired = false;
+  context.LockService = {
+    getScriptLock: () => ({
+      tryLock: () => {
+        if (!fired) {
+          fired = true;
+          const sheet = sheetOf(context, "Settings");
+          const row = sheet.grid.find(r => String(r[0]).trim() === "photo_folder_id");
+          row[1] = "FOLDER_FROM_THE_OTHER_PHONE";
+        }
+        return true;
+      },
+      releaseLock: () => {},
+    }),
+  };
+
+  assert.equal(vm.runInContext("PhotoFolder.ensureId()", context), "FOLDER_FROM_THE_OTHER_PHONE");
+  assert.equal(context.Drive.folders.size, 0, "the loser of the race uses the winner's folder");
 });
 
 // ---- the request cache must never answer a read taken inside the lock ----

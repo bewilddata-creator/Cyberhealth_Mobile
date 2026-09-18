@@ -9,7 +9,9 @@
 //     subfolder per medicine inside it, and the photo files, shares those link-readable, and
 //     trashes the ones it replaces. Nothing else in the family's Drive is reachable at all --
 //     not even a folder they made by hand and pasted into Settings.photo_folder_id. See
-//     README Part 2.
+//     README Part 2. Drive.gs reaches Drive through the ADVANCED service (Drive API v3, turned
+//     on by dependencies.enabledAdvancedServices), not DriveApp: Apps Script gates its built-in
+//     services on the declared scopes and DriveApp demands the wide one. Drive.gs says more.
 //
 // There used to be an OnlyCurrentDoc annotation on this line. It is deliberately GONE, and must
 // not be put back: that annotation only steers the automatic scan, which an explicit "oauthScopes"

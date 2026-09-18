@@ -49,6 +49,33 @@ test("appsscript.json declares exactly the OAuth scopes this project needs, and 
   assert.equal(manifest.timeZone, "Asia/Bangkok");
 });
 
+// Apps Script gates its BUILT-IN services on the declared scopes at call time, before Drive
+// sees the request, and DriveApp is documented for .../auth/drive and .../auth/drive.readonly
+// only. Under drive.file the first DriveApp.createFolder throws "You do not have permission to
+// call DriveApp.createFolder". The advanced Drive service has no such gate, so the narrowing
+// only holds as long as BOTH of these stay true: the manifest switches the advanced service on,
+// and no .gs file reaches for DriveApp.
+test("appsscript.json switches on the advanced Drive service, which is what drive.file needs", () => {
+  const manifest = JSON.parse(readFileSync("apps-script/appsscript.json", "utf8"));
+  assert.deepEqual(manifest.dependencies.enabledAdvancedServices, [
+    { userSymbol: "Drive", serviceId: "drive", version: "v3" },
+  ]);
+});
+
+test("no .gs file calls DriveApp, which Apps Script refuses under the drive.file scope", () => {
+  for (const file of readdirSync("apps-script").filter(f => f.endsWith(".gs"))) {
+    const source = readFileSync(join("apps-script", file), "utf8")
+      .split("\n")
+      .filter(line => !/^\s*(\/\/|\*|\/\*)/.test(line)) // the comments explaining why not
+      .join("\n");
+    assert.doesNotMatch(
+      source,
+      /\bDriveApp\b/,
+      `${file}: DriveApp is gated on the wide .../auth/drive scope, so this would throw on the family's first photo -- use the advanced Drive service (Drive.Files, Drive.Permissions)`,
+    );
+  }
+});
+
 test("no .gs file claims @OnlyCurrentDoc, which explicit oauthScopes make a false promise", () => {
   for (const file of readdirSync("apps-script").filter(f => f.endsWith(".gs"))) {
     assert.doesNotMatch(

@@ -8,7 +8,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import vm from "node:vm";
 import { fixtureTables, fakeCtx, loginAs } from "./fixtures.js";
-import { fakeSpreadsheetApp, fakeDriveApp } from "./gs-sheet-fake.js";
+import { fakeSpreadsheetApp, fakeDrive } from "./gs-sheet-fake.js";
 import { handle } from "../server/actions.js";
 
 function loadGs() {
@@ -19,17 +19,30 @@ function loadGs() {
   return context;
 }
 
-// drive is the fake DriveApp checkSheet should see. The default one owns SAMPLE_FOLDER_ID, the
+// drive is the fake advanced Drive service checkSheet should see. The default one owns
+// SAMPLE_FOLDER_ID, the
 // folder id the fixture's Settings tab holds -- i.e. a Sheet whose photo folder the app made
-// itself and can still open. Pass fakeDriveApp(null) for a Drive where it cannot.
+// itself and can still open. Pass fakeDrive(null) for a Drive where it cannot.
 function runCheckSheet(tables, columnsByTab, drive) {
   const context = loadGs();
   context.SpreadsheetApp = fakeSpreadsheetApp(tables, columnsByTab || tables.__columns);
-  context.DriveApp = drive || fakeDriveApp();
+  context.Drive = drive || fakeDrive();
   // checkSheet() builds its array inside the vm realm, whose Array is a different
   // constructor than this file's -- deepEqual against a host-realm [] would otherwise fail
   // on prototype identity alone. Round-tripping through JSON gives back a plain host array.
   return JSON.parse(JSON.stringify(vm.runInContext("checkSheet()", context)));
+}
+
+// A Drive that refuses with 403 rather than 404: the app was never granted the permission,
+// which is a different thing from "that folder is not one of ours".
+function deniedDrive() {
+  const drive = fakeDrive(null);
+  drive.Files.get = () => {
+    const err = new Error("Insufficient permissions for this file");
+    err.details = { code: 403, message: "Insufficient permissions for this file" };
+    throw err;
+  };
+  return drive;
 }
 
 // A deep-enough clone to mutate one tab's rows without touching the shared fixture.
@@ -188,7 +201,7 @@ test("checkSheet names an emergency card whose user_id is not in Users", () => {
 test("checkSheet says nothing about an empty photo_folder_id: setUpPhotoFolder fills it in", () => {
   const tables = clone(fixtureTables());
   tables.Settings = tables.Settings.map(r => (r.key === "photo_folder_id" ? { ...r, value: "" } : r));
-  // Deliberately no DriveApp in the context at all: a blank id must never be looked up, so
+  // Deliberately no Drive in the context at all: a blank id must never be looked up, so
   // checkSheet must get through this without touching Drive even once.
   const context = loadGs();
   context.SpreadsheetApp = fakeSpreadsheetApp(tables);
@@ -206,12 +219,25 @@ test("checkSheet reports a photo_folder_id the app cannot open, and says how to 
   assert.match(problems[0], /setUpPhotoFolder/);
 });
 
+test("checkSheet reports a Drive permission problem as itself, not as the hand-made-folder advice", () => {
+  // The distinction that matters: a 404 means "not a folder this app made", and clearing the
+  // Settings cell fixes it. A 403 means the app was never granted the permission, and clearing
+  // the cell would not help at all -- it would just hide the real error until it reached a
+  // phone. checkSheet must not flatten the second into the first.
+  const tables = clone(fixtureTables());
+  const problems = runCheckSheet(tables, null, deniedDrive());
+  assert.equal(problems.length, 1, problems.join("\n"));
+  assert.match(problems[0], /photo_folder_id/);
+  assert.match(problems[0], /Insufficient permissions/);
+  assert.doesNotMatch(problems[0], /setUpPhotoFolder/, "clearing the cell is not the fix here, so do not tell them it is");
+});
+
 test("checkSheet still never writes to the Sheet while checking the photo folder", () => {
   const tables = clone(fixtureTables());
   const context = loadGs();
   const spreadsheetApp = fakeSpreadsheetApp(tables);
   context.SpreadsheetApp = spreadsheetApp;
-  context.DriveApp = fakeDriveApp(null); // the folder is unreachable, the worst case
+  context.Drive = fakeDrive(null); // the folder is unreachable, the worst case
   const settings = spreadsheetApp.getActive().getSheetByName("Settings");
   const before = JSON.stringify(settings.grid);
   const problems = JSON.parse(JSON.stringify(vm.runInContext("checkSheet()", context)));
