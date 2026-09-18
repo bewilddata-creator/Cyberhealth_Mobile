@@ -3,13 +3,14 @@
 import { start, S, ctx, now, SCREENS, formModel } from "./app.js";
 import { adoptApiUrlFromLocation } from "./api.js";
 import { bangkokToday } from "./schedule.js";
-import { medsModel, detailModel, doctorsModel, emergencyModel, canEditOwner } from "./viewmodel.js";
+import { medsModel, detailModel, doctorsModel, emergencyModel, canEditOwner, medicineLibraryModel, medicineLibraryDetail, doctorLibraryModel, hospitalLibraryModel } from "./viewmodel.js";
 import { renderMeds } from "./views/meds.js";
 import { renderDetail } from "./views/detail.js";
 import { renderDoctors } from "./views/doctors.js";
 import { renderEmergency, renderEmergencyEdit } from "./views/emergency.js";
 import { renderMore } from "./views/more.js";
-import { renderMedicineForm, renderPrescriptionForm, renderDoseForm, renderScheduleForm } from "./views/forms.js";
+import { renderMedicineForm, renderPrescriptionForm, renderDoseForm, renderScheduleForm, renderDoctorForm, renderHospitalForm } from "./views/forms.js";
+import { renderMedicineLibrary, renderMedicineLibraryDetail, renderDoctorLibrary, renderHospitalLibrary } from "./views/libraries.js";
 
 Object.assign(SCREENS, {
   meds: () => ({ tab: "meds", body: renderMeds({ model: medsModel(S.idx, S.owner), ctx: ctx(), canEdit: canEditOwner(S.idx, S.owner) }) }),
@@ -33,6 +34,21 @@ Object.assign(SCREENS, {
   prescriptionForm: () => ({ tab: "meds", body: renderPrescriptionForm({ model: formModel(), error: S.formError, busy: S.formBusy }) }),
   doseForm: () => ({ tab: "meds", body: renderDoseForm({ model: formModel(), error: S.formError, busy: S.formBusy }) }),
   scheduleForm: () => ({ tab: "meds", body: renderScheduleForm({ model: formModel(), error: S.formError, busy: S.formBusy }) }),
+  // The three lists the whole family shares. They hang off More rather than off anybody's
+  // Medicines tab because they are not per-person -- so every one of these keeps the More tab lit
+  // at the bottom of the screen, and their back arrows go there.
+  //
+  // The name of each screen is what js/app.js sets S.screen to, and it has to stay that way:
+  // formReturnScreen() only honours the screen a form was opened from when SCREENS has it, so a
+  // detail registered here under a different name would silently send Edit-then-Save to Meds.
+  medicineLibrary: () => ({ tab: "more", body: renderMedicineLibrary({ model: medicineLibraryModel(S.idx), query: S.libraryQuery }) }),
+  medicineLibraryDetail: () => ({ tab: "more", body: renderMedicineLibraryDetail({ model: medicineLibraryDetail(S.idx, S.libraryMedicine), photo: S.photo }) }),
+  doctorLibrary: () => ({ tab: "more", body: renderDoctorLibrary({ model: doctorLibraryModel(S.idx), query: S.libraryQuery }) }),
+  hospitalLibrary: () => ({ tab: "more", body: renderHospitalLibrary({ model: hospitalLibraryModel(S.idx), query: S.libraryQuery }) }),
+  // Both library forms read their model from formModel(), which rebuilds the photo, the hospitals
+  // to tick and canDelete from the freshest bootstrap on every render.
+  doctorForm: () => ({ tab: "more", body: renderDoctorForm({ model: formModel(), error: S.formError, busy: S.formBusy }) }),
+  hospitalForm: () => ({ tab: "more", body: renderHospitalForm({ model: formModel(), error: S.formError, busy: S.formBusy }) }),
 });
 
 // https-only: localhost/http development never registers the worker, so it never caches a stale

@@ -1,6 +1,6 @@
 import { call, getToken, setToken, getApiUrl, setApiUrl } from "./api.js";
 import { bangkokToday, bangkokTimeOfDay, bangkokHour, bangkokStamp, addDays, rolloverDate, TIMES_OF_DAY, FREQ, pluralUnit, medicineNameParts } from "./schedule.js";
-import { indexBoot, todayModel, weekModel, warningsForOwner, defaultOwnerId, detailModel, doctorsModel } from "./viewmodel.js";
+import { indexBoot, todayModel, weekModel, warningsForOwner, defaultOwnerId, detailModel, doctorsModel, doctorLibraryModel, hospitalLibraryModel, medicineLibraryDetail, driveImageUrl } from "./viewmodel.js";
 import { pickImage, shrinkToDataUrl } from "./photoinput.js";
 import { esc } from "./html.js";
 import { fmtFullDay } from "./format.js";
@@ -21,6 +21,11 @@ export const S = {
   // the family steps aside to add a medicine that wasn't in the list; `formFrom` is the screen
   // the back arrow returns to; `formDirty` is whether anything has been typed since it opened.
   form: null, formError: "", formBusy: false, formStash: null, formFrom: "meds", formDirty: false,
+  // The three shared lists under More (Task 6). `libraryQuery` is what the one search box on all
+  // three screens holds -- it is state rather than only DOM, because a re-render after a save has
+  // to put the same filtered list back; `libraryMedicine` is the medicine whose library page is
+  // open, kept apart from S.detail (a PRESCRIPTION id) so the two can never be confused.
+  libraryQuery: "", libraryMedicine: null,
 };
 let toastTimer = null;
 let rolloverPending = false;
@@ -295,6 +300,14 @@ async function tickAll(timeOfDay) {
 // the screen shows what the Sheet now says rather than what this phone hoped it would say.
 
 const MEDICINE_FIELD_NAMES = ["generic_name", "brand_name", "strength", "form", "purpose", "notes"];
+// Exactly DOCTOR_FIELDS and HOSPITAL_FIELDS in server/actions.js, and exactly the input names
+// js/views/forms.js emits. Anything outside these lists is ignored by the server, so a name that
+// drifts here does not fail -- it silently saves nothing.
+const DOCTOR_FIELD_NAMES = ["name", "specialty", "phone", "other_contact", "notes"];
+const HOSPITAL_FIELD_NAMES = ["name", "phone", "address", "map_link", "notes"];
+
+// data-library's value -> the screen that draws that list.
+const LIBRARY_SCREENS = { medicines: "medicineLibrary", doctors: "doctorLibrary", hospitals: "hospitalLibrary" };
 
 function ownerName() {
   const p = S.idx && S.idx.people.get(S.owner);
@@ -345,8 +358,44 @@ function doctorOptions(doctorId) {
   }
   return list;
 }
-function photoLabel(slot) {
-  const model = S.detail ? detailModel(S.idx, S.owner, S.detail) : null;
+function doctorNameOf(doctorId) {
+  const d = S.idx && S.idx.doctors.get(doctorId);
+  return (d && d.name) || "this doctor";
+}
+function hospitalNameOf(hospitalId) {
+  const h = S.idx && S.idx.hospitals.get(hospitalId);
+  return (h && h.name) || "this place";
+}
+// Which hospitals a doctor is linked to right now, straight off the last bootstrap -- the ticks
+// the doctor form opens with.
+function hospitalIdsForDoctor(doctorId) {
+  return ((S.idx && S.idx.boot.doctor_hospitals) || [])
+    .filter(dh => String(dh.doctor_id) === String(doctorId))
+    .map(dh => String(dh.hospital_id));
+}
+// Every hospital in the family's list, in the same order the Hospitals screen shows them, so the
+// tick list on the doctor form and the list he just scrolled read the same way round.
+function hospitalOptions() {
+  return hospitalLibraryModel(S.idx).rows.map(r => ({ hospital_id: r.hospital.hospital_id, name: r.hospital.name }));
+}
+// canDelete for the two forms comes from the matching library row rather than being worked out a
+// second time here: one answer, mirroring the server's own refusal, in one place. An id with no
+// row (a brand-new doctor, or one deleted since) answers undefined, which deleteBlock draws as
+// nothing at all rather than as a reason nobody checked.
+function libraryCanDelete(rows, idOf, id) {
+  if (!id) return undefined;
+  const row = rows.find(r => String(idOf(r)) === String(id));
+  return row ? row.canDelete : undefined;
+}
+
+// "packet front", for the question a Remove tap asks. The five photo rows are on two screens now
+// -- the prescription detail and the medicine library's own page -- and the label has to come
+// from whichever model is actually being shown, or the question loses the word that says WHICH
+// photo is about to go.
+function photoLabel(slot, medicineId) {
+  const model = S.screen === "medicineLibraryDetail"
+    ? medicineLibraryDetail(S.idx, medicineId)
+    : (S.detail ? detailModel(S.idx, S.owner, S.detail) : null);
   const p = model && model.photos.find(x => x.slot === slot);
   return p ? p.label.toLowerCase() : "";
 }
@@ -361,6 +410,24 @@ export function formModel() {
   // What a dose of this medicine is counted in comes from the medicine's form, and is looked up
   // here rather than frozen into S.form, so editing the medicine mid-flow is reflected at once.
   if (S.screen === "doseForm") return { ...m, medicineForm: medicineFormOf(m.prescriptionId) };
+  // Same rule for the two library forms: the photo, the list of hospitals to tick and whether the
+  // thing can be removed are all read from the freshest bootstrap on every render, never frozen
+  // into S.form -- so the photo just uploaded appears, and a doctor who became un-deletable while
+  // the form was open loses the button rather than keeping one the server would refuse.
+  if (S.screen === "doctorForm") {
+    const doctorId = m.doctorId || "";
+    const row = doctorId && S.idx ? S.idx.doctors.get(doctorId) : null;
+    return {
+      ...m,
+      photoUrl: row ? driveImageUrl(row.photo) : "",
+      hospitals: S.idx ? hospitalOptions() : [],
+      canDelete: S.idx ? libraryCanDelete(doctorLibraryModel(S.idx).rows, r => r.doctor.doctor_id, doctorId) : undefined,
+    };
+  }
+  if (S.screen === "hospitalForm") {
+    const hospitalId = m.hospitalId || "";
+    return { ...m, canDelete: S.idx ? libraryCanDelete(hospitalLibraryModel(S.idx).rows, r => r.hospital.hospital_id, hospitalId) : undefined };
+  }
   return m;
 }
 
@@ -397,6 +464,28 @@ function harvestForm(form, base) {
     const med = { ...(m.medicine || {}) };
     MEDICINE_FIELD_NAMES.forEach(k => { if (has(k)) med[k] = f[k]; });
     return { ...m, medicine: med };
+  }
+  if (form.dataset.form === "doctor") {
+    const doctor = { ...(m.doctor || {}) };
+    DOCTOR_FIELD_NAMES.forEach(k => { if (has(k)) doctor[k] = f[k]; });
+    return {
+      ...m,
+      doctorId: keep("doctorId", m.doctorId),
+      doctor,
+      // Every hospital checkbox shares name="hospitalIds", which is correct HTML and which
+      // Object.fromEntries reads as only the LAST one ticked: a doctor who sees patients at two
+      // hospitals would save with one of them, and the other link would be deleted -- silently,
+      // since setDoctorHospitals replaces the whole set. This is the same trap that once reduced
+      // a Mon/Wed/Fri prescription to Friday alone (amendment G); getAll is the only safe read.
+      // With no boxes on the page at all (there are no hospitals in the list yet) the links the
+      // doctor already has are kept rather than wiped by a form that never showed them.
+      hospitalIds: form.querySelector('input[name="hospitalIds"]') ? fd.getAll("hospitalIds").map(String) : (m.hospitalIds || []),
+    };
+  }
+  if (form.dataset.form === "hospital") {
+    const hospital = { ...(m.hospital || {}) };
+    HOSPITAL_FIELD_NAMES.forEach(k => { if (has(k)) hospital[k] = f[k]; });
+    return { ...m, hospitalId: keep("hospitalId", m.hospitalId), hospital };
   }
   return {
     ...m,
@@ -458,7 +547,7 @@ function leaveForm(screen, message) {
 
 // A form is never somewhere to come back to: leaving one has to land on a screen that shows
 // something.
-const NOT_A_RETURN = new Set(["medicineForm", "prescriptionForm", "doseForm", "scheduleForm", "emergencyEdit"]);
+const NOT_A_RETURN = new Set(["medicineForm", "prescriptionForm", "doseForm", "scheduleForm", "emergencyEdit", "doctorForm", "hospitalForm"]);
 
 // Where a form goes when it closes: back to the screen it was opened from. This used to be the
 // literal "detail", which was right while the prescription detail was the only screen with an
@@ -518,6 +607,45 @@ function openMedicineForm(medicineId) {
   // detail and the medicine library detail both carry this button.
   openForm("medicineForm", S.screen, { medicine: { ...med } });
 }
+// ---- the three shared lists under More ----
+//
+// These are the whole family's lists, not one person's, so nothing here reads or writes S.owner.
+
+function openLibrary(which) {
+  const screen = LIBRARY_SCREENS[which];
+  if (!screen) return;
+  // A filter typed on the medicines list must not come back as a filter on the doctors list: the
+  // rows would be missing and the reason would be a box he scrolled past on another screen.
+  S.libraryQuery = "";
+  go(screen);
+}
+function openLibraryMedicine(medicineId) {
+  Object.assign(S, { libraryMedicine: medicineId, photo: 0 });
+  go("medicineLibraryDetail");
+}
+// "Add a medicine to the list", from the library rather than from a half-filled prescription --
+// so nothing is stashed, and Save comes back to the list it was tapped on.
+function openBlankMedicineForm() {
+  openForm("medicineForm", S.screen, { medicine: {} });
+}
+function openDoctorForm(doctorId) {
+  const doctor = doctorId ? S.idx.doctors.get(doctorId) : null;
+  if (doctorId && !doctor) return toast("That doctor isn't in the list any more. Tap Refresh on the More tab.");
+  openForm("doctorForm", S.screen, {
+    doctorId: doctorId || "",
+    doctor: doctor ? { ...doctor } : {},
+    hospitalIds: doctorId ? hospitalIdsForDoctor(doctorId) : [],
+  });
+}
+function openHospitalForm(hospitalId) {
+  const hospital = hospitalId ? S.idx.hospitals.get(hospitalId) : null;
+  if (hospitalId && !hospital) return toast("That place isn't in the list any more. Tap Refresh on the More tab.");
+  openForm("hospitalForm", S.screen, {
+    hospitalId: hospitalId || "",
+    hospital: hospital ? { ...hospital } : {},
+  });
+}
+
 // "It's not in the list -- add it", from inside the half-filled prescription form. The partly
 // filled prescription is stashed first and comes back with the new medicine already chosen: the
 // family asked for exactly this, and re-typing a whole prescription is how a wrong one gets typed.
@@ -568,6 +696,64 @@ function saveMedicine(form) {
         : `${saved.generic_name} is in the list now, and chosen below.`);
     }
     leaveForm(formReturnScreen(), editing ? "Saved." : `${saved.generic_name} is in the medicine list.`);
+  });
+}
+
+// The doctor form is the only screen here that saves in TWO calls: the doctor's own fields, then
+// the set of hospitals they see patients at. The second can fail on its own -- a hospital removed
+// from another phone between opening this form and saving it is refused by setDoctorHospitals --
+// and the family must never be told everything saved when half of it did not.
+//
+// So the second failure is carried out to finish() rather than thrown: the reload and the
+// sessionEnded() guard still run (a save whose reload ends the session has to land on the login
+// screen, not a dead spinner), and then the form STAYS OPEN with the server's own words, saying
+// which half landed. The doctor stays saved -- undoing them would be a second write nobody asked
+// for -- and S.form.doctorId is filled in, so tapping Save again updates the doctor who now
+// exists instead of adding a second copy of them.
+let doctorHospitalsFailed = "";
+
+async function sendDoctor(m) {
+  doctorHospitalsFailed = "";
+  const fields = {};
+  DOCTOR_FIELD_NAMES.forEach(k => { fields[k] = String((m.doctor || {})[k] || ""); });
+  const saved = m.doctorId
+    ? await call("updateDoctor", { doctorId: m.doctorId, fields })
+    : await call("addDoctor", { fields });
+  try {
+    // getAll, not Object.fromEntries: see harvestForm's doctor branch.
+    await call("setDoctorHospitals", { doctorId: saved.doctor_id, hospitalIds: m.hospitalIds || [] });
+  } catch (e) {
+    doctorHospitalsFailed = e.message;
+  }
+  return saved;
+}
+
+function saveDoctor(form) {
+  return runSave(form, sendDoctor, (saved, m) => {
+    if (doctorHospitalsFailed) {
+      const added = !m.doctorId;
+      const why = doctorHospitalsFailed;
+      doctorHospitalsFailed = "";
+      staleAfterSave = "";
+      Object.assign(S, {
+        form: { ...m, doctorId: saved.doctor_id },
+        formError: `${saved.name} ${added ? "is in the list" : "is saved"}, but where they see patients wasn't: ${why} The places you ticked are still ticked — tap Save again to finish.`,
+      });
+      return render();
+    }
+    leaveForm(formReturnScreen(), m.doctorId ? "Saved." : `${saved.name} is in the family's doctor list.`);
+  });
+}
+
+function saveHospital(form) {
+  return runSave(form, m => {
+    const fields = {};
+    HOSPITAL_FIELD_NAMES.forEach(k => { fields[k] = String((m.hospital || {})[k] || ""); });
+    return m.hospitalId
+      ? call("updateHospital", { hospitalId: m.hospitalId, fields })
+      : call("addHospital", { fields });
+  }, (saved, m) => {
+    leaveForm(formReturnScreen(), m.hospitalId ? "Saved." : `${saved.name} is in the family's list of places.`);
   });
 }
 
@@ -649,22 +835,27 @@ function saveSchedule(form) {
 // Stop, restart and delete have no form to go busy, so this both guards against a second tap
 // while the first is in flight and names the medicine in the toast -- a mis-tap says what it did.
 let acting = false;
-async function actOnPrescription(action, prescriptionId, message, after) {
+// `message` is either what to say, or a function of the server's reply -- deleteMedicine answers
+// with warnings (photos it could not bin) that have to be said instead of a clean "it's gone".
+async function runAction(action, payload, message, after) {
   if (acting) return;
   acting = true;
   staleAfterSave = "";
   try {
-    await call(action, { prescriptionId, reason: "" });
+    const result = await call(action, payload);
     staleAfterSave = await loadBoot();
     if (sessionEnded()) return;
-    if (after) after();
-    announce(message);
+    if (after) after(result);
+    announce(typeof message === "function" ? message(result) : message);
   } catch (e) {
     staleAfterSave = "";
     toast(e.message);
   } finally {
     acting = false;
   }
+}
+async function actOnPrescription(action, prescriptionId, message, after) {
+  return runAction(action, { prescriptionId, reason: "" }, message, after);
 }
 
 // Stop asks too, for the same reason Delete does: it sits directly above Delete in a stack of
@@ -694,6 +885,45 @@ function deletePrescription(prescriptionId) {
   });
 }
 
+// ---- removing something from one of the family's shared lists ----
+//
+// All three ask first, name the thing, and say what goes with it and what does not. Saying no
+// sends nothing at all -- the question comes before the request, never after it. The button is
+// only drawn when the view model says the server would allow it, and the server checks again, so
+// a "no" here is a mis-tap being caught rather than a rule being enforced.
+
+function deleteLibraryMedicine(medicineId) {
+  const name = medicineNameOf(medicineId);
+  const ask = `Remove ${name} from the family's medicine list? Nobody takes it and nobody has taken it, so no record is lost. Its photos go too. This can't be undone.`;
+  if (!confirm(ask)) return;
+  return runAction("deleteMedicine", { medicineId },
+    r => (r && r.warnings && r.warnings.length ? r.warnings[0] : `${name} is off the medicine list.`),
+    () => {
+      S.libraryMedicine = null;
+      go("medicineLibrary");
+    });
+}
+
+function deleteDoctor(doctorId) {
+  const name = doctorNameOf(doctorId);
+  const ask = `Remove ${name} from the family's doctor list? No medicine names them and they're not on anyone's care team, so no record is lost. Where they see patients is forgotten too. This can't be undone.`;
+  if (!confirm(ask)) return;
+  return runAction("deleteDoctor", { doctorId }, `${name} is off the doctor list.`, () => {
+    dropForm();
+    go("doctorLibrary");
+  });
+}
+
+function deleteHospital(hospitalId) {
+  const name = hospitalNameOf(hospitalId);
+  const ask = `Remove ${name} from the family's list of places? Nobody's hospital number, care team or doctor points at it, so no record is lost. This can't be undone.`;
+  if (!confirm(ask)) return;
+  return runAction("deleteHospital", { hospitalId }, `${name} is off the list.`, () => {
+    dropForm();
+    go("hospitalLibrary");
+  });
+}
+
 // "<medicine id>|<slot>", split on the LAST bar: the five slot names contain none, but a
 // hand-typed medicine_id in the Sheet can (amendment J).
 export function splitPhotoTarget(value) {
@@ -712,10 +942,27 @@ let photoBusy = false;
 // A success message belongs to the screen that started the upload: shrinking and uploading takes
 // seconds, and the family can be somewhere else by the time it lands. A failure is always said --
 // silence after a photo that did not save would read as success.
-function photoDone(startedOn, message) {
+// `stillThere` is asked at the moment the upload lands, not before it started: it answers whether
+// the screen that began this is still the screen in front of the family.
+function photoDone(stillThere, message) {
   if (sessionEnded()) return;
-  if (S.screen === "detail" && S.detail === startedOn) return announce(message);
+  if (stillThere()) return announce(message);
   staleAfterSave = "";
+}
+
+// The five photo rows are drawn on two screens, so "am I still where this started?" is two
+// questions: the prescription detail is keyed by the prescription being shown, the medicine
+// library's page by the medicine. Anywhere else, the answer is no and the upload finishes quietly.
+function photoScreenGuard() {
+  if (S.screen === "detail") {
+    const id = S.detail;
+    return () => S.screen === "detail" && S.detail === id;
+  }
+  if (S.screen === "medicineLibraryDetail") {
+    const id = S.libraryMedicine;
+    return () => S.screen === "medicineLibraryDetail" && S.libraryMedicine === id;
+  }
+  return () => false;
 }
 
 async function uploadPhoto(medicineId, slot) {
@@ -725,13 +972,13 @@ async function uploadPhoto(medicineId, slot) {
   try {
     const file = await pickImage();
     if (!file) return;
-    const startedOn = S.screen === "detail" ? S.detail : null;
+    const here = photoScreenGuard();
     // The detail screen draws no spinner, so the toast is what says something is happening.
     toast("Saving the photo…");
     const dataUrl = await shrinkToDataUrl(file);
     const { warnings } = await call("uploadMedicinePhoto", { medicineId, slot, dataUrl });
     staleAfterSave = await loadBoot();
-    photoDone(startedOn, warnings && warnings.length ? warnings[0] : "Photo saved.");
+    photoDone(here, warnings && warnings.length ? warnings[0] : "Photo saved.");
   } catch (e) {
     staleAfterSave = "";
     toast(e.message);
@@ -742,15 +989,63 @@ async function uploadPhoto(medicineId, slot) {
 
 async function removePhoto(medicineId, slot) {
   if (photoBusy) return;
-  const label = photoLabel(slot);
+  const label = photoLabel(slot, medicineId);
   if (!confirm(`Remove the ${label || "chosen"} photo of ${medicineNameOf(medicineId)}? The medicine itself stays on the list.`)) return;
   photoBusy = true;
   staleAfterSave = "";
-  const startedOn = S.screen === "detail" ? S.detail : null;
+  const here = photoScreenGuard();
   try {
     const { warnings } = await call("removeMedicinePhoto", { medicineId, slot });
     staleAfterSave = await loadBoot();
-    photoDone(startedOn, warnings && warnings.length ? warnings[0] : "Photo removed.");
+    photoDone(here, warnings && warnings.length ? warnings[0] : "Photo removed.");
+  } catch (e) {
+    staleAfterSave = "";
+    toast(e.message);
+  } finally {
+    photoBusy = false;
+  }
+}
+
+// ---- the doctor's own photo ----
+//
+// Same shape as the medicine photos and the same photoBusy flag, so a double tap opens one picker
+// rather than two. The message belongs to the doctor form it was started from: uploads take
+// seconds, and the family can be on another doctor -- or another screen -- by the time it lands.
+function doctorFormGuard(doctorId) {
+  return () => S.screen === "doctorForm" && !!S.form && S.form.doctorId === doctorId;
+}
+
+async function uploadDoctorPhoto(doctorId) {
+  if (photoBusy) return;
+  photoBusy = true;
+  staleAfterSave = "";
+  try {
+    const file = await pickImage();
+    if (!file) return;
+    const here = doctorFormGuard(doctorId);
+    toast("Saving the photo…");
+    const dataUrl = await shrinkToDataUrl(file);
+    const { warnings } = await call("uploadDoctorPhoto", { doctorId, dataUrl });
+    staleAfterSave = await loadBoot();
+    photoDone(here, warnings && warnings.length ? warnings[0] : "Photo saved.");
+  } catch (e) {
+    staleAfterSave = "";
+    toast(e.message);
+  } finally {
+    photoBusy = false;
+  }
+}
+
+async function removeDoctorPhoto(doctorId) {
+  if (photoBusy) return;
+  if (!confirm(`Remove the photo of ${doctorNameOf(doctorId)}? They stay in the doctor list.`)) return;
+  photoBusy = true;
+  staleAfterSave = "";
+  const here = doctorFormGuard(doctorId);
+  try {
+    const { warnings } = await call("removeDoctorPhoto", { doctorId });
+    staleAfterSave = await loadBoot();
+    photoDone(here, warnings && warnings.length ? warnings[0] : "Photo removed.");
   } catch (e) {
     staleAfterSave = "";
     toast(e.message);
@@ -779,7 +1074,7 @@ function cancelForm() {
 }
 
 root.addEventListener("click", e => {
-  const el = e.target.closest("[data-tab],[data-date],[data-shift],[data-pick],[data-reset],[data-tick],[data-tickall],[data-logout],[data-refresh],[data-open],[data-back],[data-photo],[data-public],[data-sosfor],[data-edit-sos],[data-add-prescription],[data-change-dose],[data-change-schedule],[data-stop],[data-restart],[data-delete],[data-edit-medicine],[data-new-medicine],[data-upload-photo],[data-remove-photo],[data-cancel]");
+  const el = e.target.closest("[data-tab],[data-date],[data-shift],[data-pick],[data-reset],[data-tick],[data-tickall],[data-logout],[data-refresh],[data-open],[data-back],[data-photo],[data-public],[data-sosfor],[data-edit-sos],[data-add-prescription],[data-change-dose],[data-change-schedule],[data-stop],[data-restart],[data-delete],[data-edit-medicine],[data-new-medicine],[data-upload-photo],[data-remove-photo],[data-cancel],[data-library],[data-back-more],[data-back-library],[data-library-search],[data-add-medicine],[data-add-doctor],[data-add-hospital],[data-open-medicine],[data-open-doctor],[data-open-hospital],[data-edit-doctor],[data-edit-hospital],[data-delete-medicine],[data-delete-doctor],[data-delete-hospital],[data-upload-doctor-photo],[data-remove-doctor-photo]");
   if (!el || !root.contains(el)) return;
   const d = el.dataset;
   if (d.tab) return d.tab === "login" ? showLogin() : go(d.tab);
@@ -808,6 +1103,28 @@ root.addEventListener("click", e => {
   if (d.uploadPhoto) { const t = splitPhotoTarget(d.uploadPhoto); return uploadPhoto(t.medicineId, t.slot); }
   if (d.removePhoto) { const t = splitPhotoTarget(d.removePhoto); return removePhoto(t.medicineId, t.slot); }
   if ("cancel" in d) return cancelForm();
+  // ---- the three shared lists under More ----
+  if (d.library) return openLibrary(d.library);
+  if ("backMore" in d) return go("more");
+  if (d.backLibrary) return go(LIBRARY_SCREENS[d.backLibrary] || "more");
+  // The search box filters as it is typed, which is the `input` listener's job below. A tap on
+  // the box itself is swallowed here rather than left to fall through: re-rendering on the tap
+  // that opens the keyboard would swap the input out from under the thumb that just landed on it.
+  if ("librarySearch" in d) return;
+  if ("addMedicine" in d) return openBlankMedicineForm();
+  if ("addDoctor" in d) return openDoctorForm("");
+  if ("addHospital" in d) return openHospitalForm("");
+  if (d.openMedicine) return openLibraryMedicine(d.openMedicine);
+  // Opening a doctor or a place IS its form -- there is no separate read-only page for either, so
+  // data-open-* and data-edit-* are the same action. No screen draws data-edit-doctor or
+  // data-edit-hospital today; they are here so an Edit button added later is wired, not dead.
+  if (d.openDoctor || d.editDoctor) return openDoctorForm(d.openDoctor || d.editDoctor);
+  if (d.openHospital || d.editHospital) return openHospitalForm(d.openHospital || d.editHospital);
+  if (d.deleteMedicine) return deleteLibraryMedicine(d.deleteMedicine);
+  if (d.deleteDoctor) return deleteDoctor(d.deleteDoctor);
+  if (d.deleteHospital) return deleteHospital(d.deleteHospital);
+  if (d.uploadDoctorPhoto) return uploadDoctorPhoto(d.uploadDoctorPhoto);
+  if (d.removeDoctorPhoto) return removeDoctorPhoto(d.removeDoctorPhoto);
 });
 
 root.addEventListener("change", e => {
@@ -831,6 +1148,14 @@ root.addEventListener("change", e => {
 // per keystroke is how a phone loses its keyboard mid-word.
 root.addEventListener("input", e => {
   const el = e.target;
+  // The one search box on the three library screens, filtering as he types. This IS a re-render
+  // per keystroke -- the list has to shorten as the word grows -- and it is the case render()'s
+  // value-and-focus carry-over exists for: the box keeps what was typed, keeps the caret at the
+  // end of it, and so keeps the phone's keyboard up.
+  if (el.matches && el.matches("[data-library-search]")) {
+    S.libraryQuery = el.value;
+    return render();
+  }
   if (el.closest && el.closest("form[data-form]")) S.formDirty = true;
   // "1 tablet" / "2 tablets" beside the amount box, kept in step with what is being typed. The
   // one word is rewritten in place rather than the form re-rendered: a re-render per keystroke is
@@ -857,6 +1182,10 @@ root.addEventListener("submit", e => {
   if (form.dataset.form === "prescription") return savePrescription(form);
   if (form.dataset.form === "dose") return saveDose(form);
   if (form.dataset.form === "schedule") return saveSchedule(form);
+  // Handed the form element, not `f`: the hospital checkboxes all share name="hospitalIds", which
+  // Object.fromEntries has already reduced to the last one ticked.
+  if (form.dataset.form === "doctor") return saveDoctor(form);
+  if (form.dataset.form === "hospital") return saveHospital(form);
 });
 
 document.addEventListener("visibilitychange", () => {

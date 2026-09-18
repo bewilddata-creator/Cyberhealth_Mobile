@@ -157,7 +157,7 @@ function newWorld() {
 // A logged-in phone showing Dad's medicines, with nothing recorded from a previous test.
 async function fresh() {
   newWorld();
-  Object.assign(S, { boot: null, idx: null, owner: null, date: null, screen: "loading", toast: "", form: null, formStash: null, formError: "", formBusy: false, formDirty: false, detail: null });
+  Object.assign(S, { boot: null, idx: null, owner: null, date: null, screen: "loading", toast: "", form: null, formStash: null, formError: "", formBusy: false, formDirty: false, detail: null, libraryQuery: "", libraryMedicine: null });
   await loadBoot();
   world.sent.length = 0;
   confirms.length = 0;
@@ -220,6 +220,11 @@ const changeOn = (form, name, value, attrs = []) => {
   });
 };
 const typeIn = form => listeners.get("input")({ target: { closest: sel => (sel.includes("form[data-form]") ? form : null) } });
+// A character typed into the one search box the three library screens share. It is not in a form
+// and never submitted: the list filters on `input`, which is why this fires that and nothing else.
+const searchFor = value => listeners.get("input")({
+  target: { value, matches: sel => sel.includes("data-library-search"), closest: () => null },
+});
 
 const lastSent = action => [...world.sent].reverse().find(r => r.action === action);
 
@@ -917,10 +922,11 @@ test("every editing button on the Meds and detail screens is matched by the clic
 
 test("Edit details goes back to the screen it was tapped on, not always the prescription detail", async () => {
   await fresh();
-  // Stand in for the medicine library detail Task 6 registers; the point is that it is not
-  // "detail", and that leaving the form lands back on it.
-  SCREENS.medicineLibraryDetail = () => ({ tab: "more", body: "<p>the medicine library detail</p>" });
+  // The medicine library's own detail, which Task 6 registered for real. The point is that it is
+  // not "detail", and that leaving the form lands back on it.
+  assert.ok(SCREENS.medicineLibraryDetail, "the library detail has to be a registered screen, or the form falls back to Meds");
   S.detail = null;
+  S.libraryMedicine = "MED01";
   S.screen = "medicineLibraryDetail";
 
   await clickOn({ editMedicine: "MED01" });
@@ -939,7 +945,6 @@ test("Edit details goes back to the screen it was tapped on, not always the pres
     field("form", "Tablet"), field("purpose", "Blood pressure"), field("notes", ""),
   ]));
   assert.equal(S.screen, "medicineLibraryDetail");
-  delete SCREENS.medicineLibraryDetail;
 });
 
 test("Edit details tapped on the prescription detail still goes back to the prescription detail", async () => {
@@ -1082,4 +1087,433 @@ test("two strengths of one medicine sort together, and by number", async () => {
   await clickOn({ addPrescription: "" });
   const labels = pickerLabels().filter(l => l.startsWith("Amlodipine"));
   assert.deepEqual(labels, ["Amlodipine 5 mg", "Amlodipine 10 mg"]);
+});
+
+// ---- the three shared lists under More (Task 6) ----
+//
+// These are the whole family's lists, not one person's. Everything below asserts the PAYLOAD the
+// phone sends and the screen it lands on, because that is where a wiring bug hides: nothing here
+// throws, it just saves the wrong thing quietly.
+
+const DOCTOR_FORM = (over = {}) => [
+  ...(over.doctorId ? [field("doctorId", over.doctorId)] : []),
+  field("name", over.name === undefined ? "Dr. Nid P." : over.name),
+  field("specialty", over.specialty === undefined ? "Eyes" : over.specialty),
+  field("phone", over.phone === undefined ? "02-555-0199" : over.phone),
+  field("other_contact", over.other_contact === undefined ? "" : over.other_contact),
+  field("notes", over.notes === undefined ? "" : over.notes),
+];
+const HOSPITAL_BOXES = (all, picked) => all.map(id => box("hospitalIds", id, picked.includes(id)));
+const HOSPITAL_FORM = (over = {}) => [
+  ...(over.hospitalId ? [field("hospitalId", over.hospitalId)] : []),
+  field("name", over.name === undefined ? "Lakeside Clinic" : over.name),
+  field("phone", over.phone === undefined ? "02-555-0120" : over.phone),
+  field("address", over.address === undefined ? "12 Lake Road" : over.address),
+  field("map_link", over.map_link === undefined ? "maps.app.goo.gl/x" : over.map_link),
+  field("notes", over.notes === undefined ? "" : over.notes),
+];
+
+// A doctor and a place nothing points at yet, which is the only kind either screen offers to
+// delete. Everything in the fixture is already referenced by a prescription, a care team or a
+// hospital number, so the delete tests have to make their own.
+async function addSpareDoctor() {
+  await clickOn({ library: "doctors" });
+  await clickOn({ addDoctor: "" });
+  await submitOf(makeForm("doctor", [...DOCTOR_FORM({ name: "Dr. Nobody" }), ...HOSPITAL_BOXES(["HOS01", "HOS02"], [])]));
+  return world.ctx.db.rows("Doctors").find(d => d.name === "Dr. Nobody").doctor_id;
+}
+async function addSpareHospital() {
+  await clickOn({ library: "hospitals" });
+  await clickOn({ addHospital: "" });
+  await submitOf(makeForm("hospital", HOSPITAL_FORM({ name: "Lakeside Clinic" })));
+  return world.ctx.db.rows("Hospitals").find(h => h.name === "Lakeside Clinic").hospital_id;
+}
+
+test("More opens each of the three lists, and the back arrow goes back to More", async () => {
+  await fresh();
+  S.screen = "more";
+  for (const [which, screen] of [["medicines", "medicineLibrary"], ["doctors", "doctorLibrary"], ["hospitals", "hospitalLibrary"]]) {
+    await clickOn({ library: which });
+    assert.equal(S.screen, screen);
+    // The screen really draws -- an unregistered name would fall through to Today.
+    render();
+    assert.match(root.innerHTML, /data-back-more/);
+    await clickOn({ backMore: "" });
+    assert.equal(S.screen, "more");
+  }
+});
+
+test("a filter typed on one list does not follow him to the next one", async () => {
+  await fresh();
+  S.screen = "more";
+  await clickOn({ library: "medicines" });
+  await searchFor("amlo");
+  assert.equal(S.libraryQuery, "amlo");
+  assert.match(root.innerHTML, /Amlodipine/);
+  assert.doesNotMatch(root.innerHTML, /Metformin/, "the list really is filtered, not just the box");
+  await clickOn({ backMore: "" });
+  await clickOn({ library: "doctors" });
+  assert.equal(S.libraryQuery, "", "a word typed on the medicines list would hide doctors for no visible reason");
+  render();
+  assert.match(root.innerHTML, /Somchai/);
+});
+
+test("opening a medicine from the library opens its own page, and Edit details comes back to it", async () => {
+  await fresh();
+  await clickOn({ library: "medicines" });
+  await clickOn({ openMedicine: "MED01" });
+  assert.equal(S.screen, "medicineLibraryDetail");
+  assert.equal(S.libraryMedicine, "MED01");
+  render();
+  assert.match(root.innerHTML, /Amlodipine/);
+
+  // The whole point of registering it under this exact name: formReturnScreen() only honours the
+  // screen a form was opened from when SCREENS has it, so a mismatch sends Save back to Meds.
+  await clickOn({ editMedicine: "MED01" });
+  assert.equal(S.formFrom, "medicineLibraryDetail");
+  await submitOf(makeForm("medicine", [
+    field("generic_name", "Amlodipine"), field("brand_name", "Norvasc"), field("strength", "5 mg"),
+    field("form", "Tablet"), field("purpose", "Blood pressure"), field("notes", ""),
+  ]));
+  assert.equal(S.screen, "medicineLibraryDetail", "Save must come back where Edit was tapped");
+  assert.equal(world.ctx.db.rows("Medicines").find(m => m.medicine_id === "MED01").brand_name, "Norvasc");
+});
+
+test("Add a medicine from the library saves and comes back to the library, not to Meds", async () => {
+  await fresh();
+  await clickOn({ library: "medicines" });
+  await clickOn({ addMedicine: "" });
+  assert.equal(S.screen, "medicineForm");
+  assert.equal(S.formStash, null, "nothing was half-filled behind this one");
+  await submitOf(makeForm("medicine", [
+    field("generic_name", "Simvastatin"), field("brand_name", ""), field("strength", "20 mg"),
+    field("form", "Tablet"), field("purpose", "Cholesterol"), field("notes", ""),
+  ]));
+  assert.equal(S.screen, "medicineLibrary");
+  assert.ok(world.ctx.db.rows("Medicines").some(m => m.generic_name === "Simvastatin"));
+});
+
+// The trap this file already guards for the seven weekday boxes, on the hospital boxes this time:
+// all of them share name="hospitalIds", and Object.fromEntries keeps only the last ticked one.
+// setDoctorHospitals REPLACES the whole set, so reading it that way would not merely miss a
+// hospital -- it would delete every link but one, with a "Saved." toast over the top.
+test("a doctor ticked at two hospitals sends both ids, because the boxes are read with getAll", async () => {
+  await fresh();
+  await clickOn({ library: "doctors" });
+  await clickOn({ addDoctor: "" });
+  assert.equal(S.screen, "doctorForm");
+  const form = makeForm("doctor", [
+    ...DOCTOR_FORM({ name: "Dr. Nid P.", specialty: "Eyes" }),
+    ...HOSPITAL_BOXES(["HOS01", "HOS02"], ["HOS01", "HOS02"]),
+  ]);
+  // The obvious read, and what it would have sent.
+  assert.equal(Object.fromEntries(new FormData(form)).hospitalIds, "HOS02");
+
+  await submitOf(form);
+  const added = lastSent("addDoctor");
+  assert.deepEqual(added.fields, { name: "Dr. Nid P.", specialty: "Eyes", phone: "02-555-0199", other_contact: "", notes: "" });
+  const saved = world.ctx.db.rows("Doctors").find(d => d.name === "Dr. Nid P.");
+  const links = lastSent("setDoctorHospitals");
+  assert.equal(links.doctorId, saved.doctor_id);
+  assert.deepEqual(links.hospitalIds, ["HOS01", "HOS02"], "both ticked hospitals must arrive, not just the last one");
+  assert.deepEqual(
+    world.ctx.db.rows("DoctorHospitals").filter(r => r.doctor_id === saved.doctor_id).map(r => r.hospital_id).sort(),
+    ["HOS01", "HOS02"],
+  );
+  // Two calls then one reload -- the screen shows what the Sheet now says, not a patched copy.
+  assert.deepEqual(world.sent.map(r => r.action), ["addDoctor", "setDoctorHospitals", "bootstrap"]);
+  assert.equal(S.screen, "doctorLibrary");
+  assert.match(S.toast, /Dr\. Nid P\. is in the family's doctor list/);
+});
+
+test("opening a doctor fills the form in, and unticking a hospital removes that link", async () => {
+  await fresh();
+  await clickOn({ library: "doctors" });
+  // DOC01 is linked to both hospitals in the fixture.
+  await clickOn({ openDoctor: "DOC01" });
+  assert.equal(S.screen, "doctorForm");
+  assert.equal(S.form.doctorId, "DOC01");
+  assert.deepEqual(S.form.hospitalIds, ["HOS01", "HOS02"]);
+  render();
+  assert.match(root.innerHTML, /value="HOS01" checked/);
+  assert.match(root.innerHTML, /value="HOS02" checked/);
+
+  await submitOf(makeForm("doctor", [
+    ...DOCTOR_FORM({ doctorId: "DOC01", name: "Dr. Somchai K.", specialty: "Cardiology", phone: "02-555-0112" }),
+    ...HOSPITAL_BOXES(["HOS01", "HOS02"], ["HOS02"]),
+  ]));
+  assert.equal(lastSent("updateDoctor").doctorId, "DOC01");
+  assert.equal(world.sent.some(r => r.action === "addDoctor"), false, "editing must never add a second copy");
+  assert.deepEqual(lastSent("setDoctorHospitals").hospitalIds, ["HOS02"]);
+  assert.deepEqual(
+    world.ctx.db.rows("DoctorHospitals").filter(r => r.doctor_id === "DOC01").map(r => r.hospital_id),
+    ["HOS02"],
+  );
+  assert.equal(S.screen, "doctorLibrary");
+});
+
+// The doctor form saves in two calls, and the second can fail on its own. The family must not be
+// told everything saved when the hospitals did not -- and tapping Save again must not leave two
+// copies of the same doctor in the list.
+test("a doctor saved whose hospitals were refused says exactly that, and saving again updates rather than duplicates", async () => {
+  await fresh();
+  await clickOn({ library: "doctors" });
+  await clickOn({ addDoctor: "" });
+  // A hospital another phone removed between opening this form and saving it.
+  await submitOf(makeForm("doctor", [
+    ...DOCTOR_FORM({ name: "Dr. Half" }),
+    ...HOSPITAL_BOXES(["HOS01", "HOS-GONE"], ["HOS-GONE"]),
+  ]));
+  const saved = world.ctx.db.rows("Doctors").filter(d => d.name === "Dr. Half");
+  assert.equal(saved.length, 1, "the doctor really was added");
+  assert.equal(S.screen, "doctorForm", "the form stays open, because half of it did not land");
+  assert.equal(S.formBusy, false, "and the Save button is alive again");
+  assert.match(S.formError, /Dr\. Half is in the list/, "it must not read as a failure -- the doctor IS saved");
+  assert.match(S.formError, /where they see patients/, "and it must not read as a success either");
+  assert.match(S.formError, /isn't in the list any more/, "the server's own words, not a guess");
+  assert.equal(S.form.doctorId, saved[0].doctor_id, "the form now knows the doctor exists");
+  render();
+  assert.match(root.innerHTML, /where they see patients/, "and she can read it above the button");
+
+  // Ticking a real hospital and saving again finishes the job, without a second Dr. Half.
+  await submitOf(makeForm("doctor", [
+    ...DOCTOR_FORM({ doctorId: saved[0].doctor_id, name: "Dr. Half" }),
+    ...HOSPITAL_BOXES(["HOS01", "HOS02"], ["HOS01"]),
+  ]));
+  assert.equal(world.sent.filter(r => r.action === "addDoctor").length, 1, "exactly one Dr. Half was ever added");
+  assert.ok(lastSent("updateDoctor"));
+  assert.equal(world.ctx.db.rows("Doctors").filter(d => d.name === "Dr. Half").length, 1);
+  assert.deepEqual(
+    world.ctx.db.rows("DoctorHospitals").filter(r => r.doctor_id === saved[0].doctor_id).map(r => r.hospital_id),
+    ["HOS01"],
+  );
+  assert.equal(S.screen, "doctorLibrary");
+  assert.equal(S.formError, "");
+});
+
+test("a place is added, then edited, and the map link is sent exactly as it was pasted", async () => {
+  await fresh();
+  await clickOn({ library: "hospitals" });
+  await clickOn({ addHospital: "" });
+  assert.equal(S.screen, "hospitalForm");
+  await submitOf(makeForm("hospital", HOSPITAL_FORM()));
+  assert.deepEqual(lastSent("addHospital").fields, {
+    name: "Lakeside Clinic", phone: "02-555-0120", address: "12 Lake Road", map_link: "maps.app.goo.gl/x", notes: "",
+  });
+  assert.equal(S.screen, "hospitalLibrary");
+  const made = world.ctx.db.rows("Hospitals").find(h => h.name === "Lakeside Clinic");
+  assert.equal(made.map_link, "maps.app.goo.gl/x");
+
+  await clickOn({ openHospital: made.hospital_id });
+  assert.equal(S.form.hospitalId, made.hospital_id);
+  await submitOf(makeForm("hospital", HOSPITAL_FORM({ hospitalId: made.hospital_id, name: "Lakeside Clinic", phone: "02-555-0121" })));
+  assert.equal(lastSent("updateHospital").hospitalId, made.hospital_id);
+  assert.equal(world.ctx.db.rows("Hospitals").find(h => h.hospital_id === made.hospital_id).phone, "02-555-0121");
+  assert.equal(S.screen, "hospitalLibrary");
+  assert.equal(S.toast, "Saved.");
+});
+
+test("a library save the server refuses keeps every box as it was typed and shows its own words", async () => {
+  await fresh();
+  await clickOn({ library: "hospitals" });
+  await clickOn({ addHospital: "" });
+  await submitOf(makeForm("hospital", HOSPITAL_FORM({ name: "", notes: "typed but not saved" })));
+  assert.equal(S.screen, "hospitalForm");
+  assert.equal(S.formBusy, false);
+  assert.match(S.formError, /needs a name/);
+  assert.equal(S.form.hospital.notes, "typed but not saved");
+  assert.equal(world.ctx.db.rows("Hospitals").length, 2, "nothing was written");
+  render();
+  assert.match(root.innerHTML, /needs a name/);
+});
+
+// Every delete asks first, names the thing, and says what happens. Saying no sends NOTHING -- not
+// a request that the server happens to refuse, nothing at all.
+test("saying no to a library delete sends no request whatsoever", async () => {
+  await fresh();
+  const doctorId = await addSpareDoctor();
+  const hospitalId = await addSpareHospital();
+  const medicineId = "MED-SPARE";
+  world.ctx.db.append("Medicines", { medicine_id: medicineId, generic_name: "Spare", strength: "1 mg", form: "Tablet" });
+  await loadBoot();
+  world.sent.length = 0;
+  confirms.length = 0;
+  confirmAnswer = false;
+
+  await clickOn({ deleteMedicine: medicineId });
+  await clickOn({ deleteDoctor: doctorId });
+  await clickOn({ deleteHospital: hospitalId });
+  assert.equal(confirms.length, 3);
+  assert.match(confirms[0], /Spare/);
+  assert.match(confirms[0], /can't be undone/);
+  assert.match(confirms[1], /Dr\. Nobody/);
+  assert.match(confirms[1], /Where they see patients is forgotten/);
+  assert.match(confirms[2], /Lakeside Clinic/);
+  assert.equal(world.sent.length, 0, "a declined question must not reach the network at all");
+  assert.ok(world.ctx.db.rows("Medicines").some(m => m.medicine_id === medicineId));
+  assert.ok(world.ctx.db.rows("Doctors").some(d => d.doctor_id === doctorId));
+  assert.ok(world.ctx.db.rows("Hospitals").some(h => h.hospital_id === hospitalId));
+});
+
+test("saying yes removes the thing and goes back to the list it came from", async () => {
+  await fresh();
+  const doctorId = await addSpareDoctor();
+  await clickOn({ openDoctor: doctorId });
+  assert.equal(S.screen, "doctorForm");
+  // The button is only drawn when nothing points at the doctor -- which is why this one was made.
+  render();
+  assert.match(root.innerHTML, new RegExp(`data-delete-doctor="${doctorId}"`));
+  await clickOn({ deleteDoctor: doctorId });
+  assert.equal(lastSent("deleteDoctor").doctorId, doctorId);
+  assert.equal(world.ctx.db.rows("Doctors").some(d => d.doctor_id === doctorId), false);
+  assert.equal(S.screen, "doctorLibrary");
+  assert.equal(S.form, null, "the form it was deleted from is not left half-open behind the list");
+  assert.match(S.toast, /Dr\. Nobody is off the doctor list/);
+
+  const hospitalId = await addSpareHospital();
+  await clickOn({ openHospital: hospitalId });
+  await clickOn({ deleteHospital: hospitalId });
+  assert.equal(lastSent("deleteHospital").hospitalId, hospitalId);
+  assert.equal(S.screen, "hospitalLibrary");
+  assert.match(S.toast, /Lakeside Clinic is off the list/);
+
+  world.ctx.db.append("Medicines", { medicine_id: "MED-SPARE", generic_name: "Spare", strength: "1 mg", form: "Tablet" });
+  await loadBoot();
+  await clickOn({ library: "medicines" });
+  await clickOn({ openMedicine: "MED-SPARE" });
+  await clickOn({ deleteMedicine: "MED-SPARE" });
+  assert.equal(lastSent("deleteMedicine").medicineId, "MED-SPARE");
+  assert.equal(S.screen, "medicineLibrary");
+  assert.equal(S.libraryMedicine, null);
+  assert.match(S.toast, /Spare is off the medicine list/);
+});
+
+test("a delete the server refuses says why, and leaves the screen where it was", async () => {
+  await fresh();
+  await clickOn({ library: "doctors" });
+  await clickOn({ openDoctor: "DOC01" });
+  // DOC01 writes RX01 and is on Dad's care team, so the button is not drawn at all...
+  render();
+  assert.doesNotMatch(root.innerHTML, /data-delete-doctor/);
+  assert.match(root.innerHTML, /can&#39;t be removed while/);
+  // ...and even reaching the handler another way is refused, said out loud, and changes nothing.
+  await clickOn({ deleteDoctor: "DOC01" });
+  assert.match(S.toast, /still named on/);
+  assert.equal(S.screen, "doctorForm");
+  assert.ok(world.ctx.db.rows("Doctors").some(d => d.doctor_id === "DOC01"));
+});
+
+test("a library save whose reload ends the session leaves the user on the login screen", async () => {
+  await fresh();
+  await clickOn({ library: "hospitals" });
+  await clickOn({ addHospital: "" });
+  world.expireSession = true;
+  await submitOf(makeForm("hospital", HOSPITAL_FORM()));
+  assert.ok(world.ctx.db.rows("Hospitals").some(h => h.name === "Lakeside Clinic"), "the write itself landed");
+  assertOnLoginScreen();
+});
+
+test("a library delete whose reload ends the session does the same", async () => {
+  await fresh();
+  const doctorId = await addSpareDoctor();
+  await clickOn({ openDoctor: doctorId });
+  world.expireSession = true;
+  await clickOn({ deleteDoctor: doctorId });
+  assert.equal(world.ctx.db.rows("Doctors").some(d => d.doctor_id === doctorId), false, "the delete itself landed");
+  assertOnLoginScreen();
+});
+
+test("a doctor photo whose reload ends the session does the same", async () => {
+  await fresh();
+  await clickOn({ library: "doctors" });
+  await clickOn({ openDoctor: "DOC01" });
+  world.expireSession = true;
+  nextPickedFile = { name: "doc.jpg", type: "image/jpeg" };
+  await clickOn({ uploadDoctorPhoto: "DOC01" });
+  assert.match(world.ctx.db.rows("Doctors").find(d => d.doctor_id === "DOC01").photo, /drive\.google\.com/);
+  assertOnLoginScreen();
+});
+
+test("the doctor's photo is shrunk, uploaded and then removable, and removing it asks first", async () => {
+  await fresh();
+  await clickOn({ library: "doctors" });
+  await clickOn({ openDoctor: "DOC02" });
+  // A doctor with no photo yet is offered one, because DOC02 is already saved.
+  render();
+  assert.match(root.innerHTML, /data-upload-doctor-photo="DOC02"/);
+  assert.doesNotMatch(root.innerHTML, /data-remove-doctor-photo/);
+
+  nextPickedFile = { name: "doc.jpg", type: "image/jpeg" };
+  await clickOn({ uploadDoctorPhoto: "DOC02" });
+  assert.equal(canvasesMade, 1, "the photo is shrunk on the phone before it goes anywhere");
+  assert.match(lastSent("uploadDoctorPhoto").dataUrl, /^data:image\/jpeg;base64,/);
+  assert.equal(lastSent("uploadDoctorPhoto").doctorId, "DOC02");
+  assert.match(world.ctx.db.rows("Doctors").find(d => d.doctor_id === "DOC02").photo, /drive\.google\.com/);
+  assert.equal(S.toast, "Photo saved.");
+  assert.equal(S.screen, "doctorForm", "still on the doctor, with the photo now on it");
+  render();
+  assert.match(root.innerHTML, /data-remove-doctor-photo="DOC02"/);
+
+  confirmAnswer = false;
+  confirms.length = 0;
+  world.sent.length = 0;
+  await clickOn({ removeDoctorPhoto: "DOC02" });
+  assert.equal(confirms.length, 1);
+  assert.match(confirms[0], /Dr\. Anan S\./);
+  assert.match(confirms[0], /stay in the doctor list/);
+  assert.equal(world.sent.length, 0);
+
+  confirmAnswer = true;
+  await clickOn({ removeDoctorPhoto: "DOC02" });
+  assert.equal(world.ctx.db.rows("Doctors").find(d => d.doctor_id === "DOC02").photo, "");
+  assert.equal(S.toast, "Photo removed.");
+});
+
+test("a medicine photo added from the library page says so there, rather than in silence", async () => {
+  await fresh();
+  await clickOn({ library: "medicines" });
+  await clickOn({ openMedicine: "MED02" });
+  nextPickedFile = { name: "box.jpg", type: "image/jpeg" };
+  await clickOn({ uploadPhoto: "MED02|box" });
+  assert.equal(lastSent("uploadMedicinePhoto").slot, "box");
+  assert.match(world.ctx.db.rows("Medicines").find(m => m.medicine_id === "MED02").photo_box, /drive\.google\.com/);
+  assert.equal(S.toast, "Photo saved.", "a photo saved with nothing said reads as a photo that did not save");
+
+  // And Remove names the slot from the library's own model, not from the prescription detail's.
+  confirmAnswer = false;
+  confirms.length = 0;
+  await clickOn({ removePhoto: "MED02|box" });
+  assert.equal(confirms.length, 1);
+  assert.match(confirms[0], /box photo of Metformin/);
+});
+
+test("every library control is in the click listener's selector list, and each one reaches a branch", async () => {
+  await fresh();
+  const selector = String(listeners.get("click"));
+  ["data-library", "data-back-more", "data-back-library", "data-library-search",
+    "data-add-medicine", "data-add-doctor", "data-add-hospital",
+    "data-open-medicine", "data-open-doctor", "data-open-hospital",
+    "data-edit-doctor", "data-edit-hospital",
+    "data-delete-medicine", "data-delete-doctor", "data-delete-hospital",
+    "data-upload-doctor-photo", "data-remove-doctor-photo"].forEach(attr => {
+    assert.ok(selector.includes(`[${attr}]`), `${attr} is not in the click listener's selector list`);
+  });
+  for (const [dataset, screen] of [
+    [{ library: "medicines" }, "medicineLibrary"],
+    [{ openMedicine: "MED01" }, "medicineLibraryDetail"],
+    [{ backLibrary: "medicines" }, "medicineLibrary"],
+    [{ library: "doctors" }, "doctorLibrary"],
+    [{ openDoctor: "DOC01" }, "doctorForm"],
+    [{ editDoctor: "DOC01" }, "doctorForm"],
+    [{ library: "hospitals" }, "hospitalLibrary"],
+    [{ openHospital: "HOS01" }, "hospitalForm"],
+    [{ editHospital: "HOS01" }, "hospitalForm"],
+    [{ addHospital: "" }, "hospitalForm"],
+    [{ addDoctor: "" }, "doctorForm"],
+    [{ addMedicine: "" }, "medicineForm"],
+    [{ backMore: "" }, "more"],
+  ]) {
+    await clickOn(dataset);
+    assert.equal(S.screen, screen, `${JSON.stringify(dataset)} should reach ${screen}`);
+  }
 });

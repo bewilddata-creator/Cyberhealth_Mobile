@@ -499,6 +499,46 @@ Two things are deliberate and worth knowing, so they don't look like bugs:
 
 ---
 
+## The family's shared lists
+
+Open the **More** tab and look under "The family's lists". There are three:
+**Medicines**, **Doctors** and **Hospitals & clinics**.
+
+These lists belong to the whole family, not to one person. Everybody who logs
+in sees the same three lists, and everybody can add to them and change them —
+so when your daughter corrects a phone number, you see the correction too. Tap
+any row to open it; changing it and removing it both happen there, not on the
+list. Each list has a search box at the top: type a few letters of a name and
+the list shortens as you type.
+
+- **Medicines** — every medicine the family keeps track of. Opening one shows
+  who takes it now, what it's for, and the five photo slots (the box, the
+  packet front and back, the pill front and back). It's the same list the
+  "Which medicine?" picker offers when you start somebody on a new medicine.
+- **Doctors** — their names, what they treat, how to reach them, and which
+  hospitals or clinics each one sees patients at (tick every place that
+  applies). Once a doctor is saved you can add a photo of them.
+- **Hospitals & clinics** — anywhere the family goes for care, a big hospital
+  or a small clinic, with the phone number, the address and a link to it on a
+  map.
+
+**Anything still in use can't be removed.** A medicine somebody takes — or
+used to take — stays in the list. So does a doctor named on somebody's
+medicine or on their care team, and a place that somebody's hospital number,
+care team or doctor points at. Where that's the case, the screen says so
+plainly instead of offering a Delete button that would only fail. This is
+deliberate: taking the row away would leave the older records naming something
+that isn't there any more, and they'd stop reading right. Removing one that
+nothing points at asks you to confirm first, and can't be undone.
+
+One thing worth knowing, so it doesn't look like a bug: adding a doctor here
+puts them in the family's shared doctor list straight away, but the "Who
+prescribed it?" picker on a prescription still offers only that person's own
+care team (the `CareTeam` rows described in Part 1). Putting a doctor on
+somebody's care team is still done in the Sheet for now.
+
+---
+
 ## Develop
 
 For whoever maintains the code (not the family admin):
@@ -538,6 +578,10 @@ and make sure the tests are green and there's no uncommitted drift in
   prescriptions from the app itself, and adding or editing a medicine in
   the shared library, with photos for each — see "Changing a medicine from
   the app" above.
+- The family's three shared lists — medicines, doctors, and hospitals and
+  clinics — under the More tab: adding, changing and removing them, which
+  hospitals each doctor works at, and a photo for each doctor. Anything
+  still in use can't be removed — see "The family's shared lists" above.
 - Viewing doctors, hospitals and each person's care team.
 - Viewing and editing your own emergency card; viewing everyone else's.
 - A public, no-login emergency card, reachable from the login screen.
@@ -550,9 +594,9 @@ and make sure the tests are green and there's no uncommitted drift in
 **Still coming** (the app's own "More" screen lists these under "Coming
 soon"), done directly in the Sheet for now:
 
-- Adding and editing hospitals, doctors, and which hospitals a doctor
-  works at.
-- Adding hospital numbers and care team entries.
+- Adding hospital numbers and care team entries — including putting a
+  doctor from the shared list onto somebody's care team, which is what the
+  "Who prescribed it?" picker offers.
 - Managing `Sharing` rules, and adding family members.
 - Changing your own password from inside the app (without needing a reset
   code).
