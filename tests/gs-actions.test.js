@@ -100,14 +100,17 @@ test("the real .gs files add a prescription and record its history through doPos
   assert.equal(added.data.prescription.updated_by, "U03");
   assert.equal(added.data.prescription.created_by, "U03");
 
+  // MED03 is an Injection, and addForTop sends unit "tablet" the way an old phone (or anything
+  // hand-made) would. The unit written to the Sheet is the one the medicine's form implies, not
+  // the one the request asked for -- the whole point of deriving it on the server.
   const doses = gridRows(context, "PrescriptionDoses").filter(d => d.prescription_id === prescriptionId);
-  assert.deepEqual(doses.map(d => [d.time_of_day, d.amount, d.unit]), [["Morning", "1", "tablet"]]);
+  assert.deepEqual(doses.map(d => [d.time_of_day, d.amount, d.unit]), [["Morning", "1", "injection"]]);
 
   const changes = gridRows(context, "PrescriptionChanges").filter(c => c.prescription_id === prescriptionId);
   assert.equal(changes.length, 1, "a history row reached the Sheet");
   assert.equal(changes[0].change_type, "Started");
   assert.equal(changes[0].before, "");
-  assert.match(changes[0].after, /Morning 1 tablet/);
+  assert.match(changes[0].after, /Morning 1 injection/);
   assert.equal(changes[0].reason, "Started by the doctor");
   assert.match(changes[0].changed_at, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
   assert.ok(sheetOf(context, "PrescriptionChanges").grid.length > 1, "a history row reached the Sheet");

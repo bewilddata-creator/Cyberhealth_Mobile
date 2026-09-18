@@ -138,10 +138,13 @@ test("renderPrescriptionForm escapes a medicine, doctor and note typed into the 
   assert.doesNotMatch(html, /<i>tab<\/i>/);
 });
 
+// A cream has no unit to derive, so this is the shape that still asks for one: an amount box AND
+// a unit box at every time of day. (The Tablet case, four amount boxes and a fixed word, is
+// pinned further down.)
 test("renderPrescriptionForm and renderDoseForm both have all four times of day, blank where there is no dose", () => {
   for (const html of [
-    renderPrescriptionForm({ model: { medicines: [], doctors: [], frequency: "Daily", doses: [{ timeOfDay: "Noon", amount: 2, unit: "tablet" }] }, error: "", busy: false }),
-    renderDoseForm({ model: { medicineName: "A", doses: [{ timeOfDay: "Noon", amount: 2, unit: "tablet" }] }, error: "", busy: false }),
+    renderPrescriptionForm({ model: { medicineId: "MED09", medicines: [{ medicine_id: "MED09", generic_name: "Hydrocortisone", form: "Cream" }], doctors: [], frequency: "Daily", doses: [{ timeOfDay: "Noon", amount: 2, unit: "tablet" }] }, error: "", busy: false }),
+    renderDoseForm({ model: { medicineName: "A", medicineForm: "Cream", doses: [{ timeOfDay: "Noon", amount: 2, unit: "tablet" }] }, error: "", busy: false }),
   ]) {
     for (const t of ["Morning", "Noon", "Evening", "Bedtime"]) {
       assert.match(html, new RegExp(`name="amount${t}"`), `${t} amount`);
@@ -271,4 +274,94 @@ test("renderScheduleForm keeps the reason optional and escapes a hand-typed medi
   assert.doesNotMatch(html, /<script>/);
   assert.doesNotMatch(html, /<b>why<\/b>/);
   assert.match(html, /&lt;script&gt;/);
+});
+
+// ---- the unit comes from the medicine, and is never typed again ----
+//
+// He was typing "tablet" four times to record one prescription -- the same word, four chances to
+// spell it differently, for a fact the Medicines row already held.
+
+const TIMES = ["Morning", "Noon", "Evening", "Bedtime"];
+const doseFormFor = (medicineForm, doses = []) =>
+  renderDoseForm({ model: { prescriptionId: "RX01", medicineName: "Amlodipine", medicineForm, doses }, error: "", busy: false });
+
+test("renderDoseForm asks for four amounts and no unit at all when the medicine is a tablet", () => {
+  const html = doseFormFor("Tablet", [{ timeOfDay: "Morning", amount: 2, unit: "tablet" }]);
+  for (const t of TIMES) {
+    assert.match(html, new RegExp(`name="amount${t}"`), `${t} amount`);
+    assert.doesNotMatch(html, new RegExp(`name="unit${t}"`), `${t} must not ask for a unit`);
+  }
+  assert.doesNotMatch(html, /placeholder="tablet, ml"/, "the old unit box is gone");
+});
+
+test("renderDoseForm puts the unit beside each box as words — '2 tablets', '1 tablet'", () => {
+  const html = doseFormFor("Tablet", [{ timeOfDay: "Morning", amount: 2, unit: "tablet" }, { timeOfDay: "Noon", amount: 1, unit: "tablet" }]);
+  assert.match(html, /name="amountMorning"[^>]*value="2"[^>]*data-unit="tablet"/);
+  const words = [...html.matchAll(/<span class="unit-word"[^>]*>([^<]*)<\/span>/g)].map(m => m[1]);
+  assert.deepEqual(words, ["tablets", "tablet", "tablets", "tablets"], "Morning 2 tablets, Noon 1 tablet, the empty ones plural");
+});
+
+test("renderDoseForm uses each form's own word: ml, puffs, drops, patches, injections, capsules", () => {
+  const word = form => (doseFormFor(form, [{ timeOfDay: "Morning", amount: 2 }]).match(/<span class="unit-word"[^>]*>([^<]*)<\/span>/) || [])[1];
+  assert.equal(word("Liquid"), "ml");
+  assert.equal(word("Inhaler"), "puffs");
+  assert.equal(word("Drops"), "drops");
+  assert.equal(word("Patch"), "patches");
+  assert.equal(word("Injection"), "injections");
+  assert.equal(word("Capsule"), "capsules");
+});
+
+// The escape hatch the owner asked for: insulin is counted in international units, and no form
+// implies that, so "Other" hands the typing back.
+test("renderDoseForm asks for a unit again for a cream, an Other, or a medicine with no form", () => {
+  for (const form of ["Cream", "Other", "", undefined]) {
+    const html = doseFormFor(form, [{ timeOfDay: "Morning", amount: 10, unit: "units" }]);
+    assert.match(html, /name="unitMorning"[^>]*value="10"|name="unitMorning"/, `${form} must still ask`);
+    assert.match(html, /name="unitMorning"[^>]*value="units"/, `${form} keeps what was typed`);
+    assert.doesNotMatch(html, /class="unit-word"/, `${form} has no fixed word to show`);
+  }
+});
+
+test("renderPrescriptionForm takes the unit from whichever medicine is picked", () => {
+  const medicines = [
+    { medicine_id: "MED01", generic_name: "Amlodipine", strength: "5 mg", form: "Tablet" },
+    { medicine_id: "MED02", generic_name: "Lactulose", strength: "", form: "Liquid" },
+  ];
+  const form = medicineId => renderPrescriptionForm({ model: { medicineId, medicines, doctors: [], frequency: "Daily", doses: [{ timeOfDay: "Morning", amount: 2 }] }, error: "", busy: false });
+  assert.match(form("MED01"), /<span class="unit-word"[^>]*>tablets<\/span>/);
+  assert.match(form("MED02"), /<span class="unit-word"[^>]*>ml<\/span>/);
+  // Nothing picked yet: there is no medicine to derive from, so the form asks rather than guesses.
+  assert.match(form(""), /name="unitMorning"/);
+});
+
+test("the medicine picker re-renders the form, so the unit follows the medicine", () => {
+  const html = renderPrescriptionForm({ model: { medicines: [], doctors: [], frequency: "Daily" }, error: "", busy: false });
+  assert.match(html, /<select id="f-medicine" name="medicineId" data-medpick/);
+});
+
+test("the medicine picker names medicines the way the boxes do", () => {
+  const html = renderPrescriptionForm({
+    model: { medicines: [{ medicine_id: "MED01", generic_name: "Amlodipine", brand_name: "Norvasc", strength: "5 mg" }], doctors: [], frequency: "Daily" },
+    error: "", busy: false,
+  });
+  assert.match(html, /<option value="MED01" >Norvasc \(Amlodipine\) 5 mg<\/option>/);
+});
+
+// ---- what kind of medicine it is ----
+
+test("renderMedicineForm picks the kind from a list rather than asking him to type it", () => {
+  const html = renderMedicineForm({ medicine: { generic_name: "Amlodipine", form: "Tablet" }, error: "", busy: false });
+  assert.match(html, /<select id="f-form" name="form">/);
+  assert.doesNotMatch(html, /id="f-form"[^>]*type="text"/);
+  assert.match(html, /<option value="Tablet" selected>Tablet — counted in tablets<\/option>/);
+  for (const f of ["Capsule", "Liquid", "Injection", "Inhaler", "Cream", "Drops", "Patch", "Other"]) {
+    assert.match(html, new RegExp(`<option value="${f}"`), `${f} must be offered`);
+  }
+});
+
+test("renderMedicineForm offers 'Not set' and keeps a kind the Sheet already holds that isn't on the list", () => {
+  const blank = renderMedicineForm({ medicine: {}, error: "", busy: false });
+  assert.match(blank, /<option value="" selected>Not set/);
+  const odd = renderMedicineForm({ medicine: { form: "Suppository" }, error: "", busy: false });
+  assert.match(odd, /<option value="Suppository" selected>Suppository<\/option>/, "saving must never quietly erase what the Sheet says");
 });

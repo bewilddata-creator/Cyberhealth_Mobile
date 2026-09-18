@@ -370,6 +370,10 @@ test("the medicine form adds when it has no id and updates when it has one", asy
 test("a save that fails keeps every box as it was typed and shows the server's own words", async () => {
   await fresh();
   await clickOn({ changeDose: "RX01" });
+  // A cream is the one kind of medicine the form still asks a unit for -- nothing sensible can be
+  // derived from "Cream" -- so leaving it blank is still refused here. (For MED01's usual Tablet
+  // the server would fill in "tablet" itself and this would simply save.)
+  world.ctx.db.update("Medicines", "medicine_id", "MED01", { form: "Cream" });
   // An amount with no unit: the server refuses, and the phone must not clear the form.
   const form = makeForm("dose", [
     field("prescriptionId", "RX01"),
@@ -900,4 +904,70 @@ test("every editing button on the Meds and detail screens is matched by the clic
     await clickOn(dataset);
     assert.equal(S.screen, screen);
   }
+});
+
+// ---- he stops typing the unit ----
+//
+// The form that ships now has four amount boxes and no unit box at all for a medicine whose form
+// says what it is counted in. These post exactly what that form posts, and check the Sheet still
+// ends up with a unit on every dose row -- put there by the server, from the Medicines row.
+
+const AMOUNTS_ONLY = (amounts = {}) => ["Morning", "Noon", "Evening", "Bedtime"]
+  .map(t => field(`amount${t}`, amounts[t] === undefined ? "" : amounts[t]));
+
+test("the dose form sends no unit, and the Sheet still gets the medicine's own", async () => {
+  await fresh();
+  await clickOn({ changeDose: "RX01" });
+  await submitOf(makeForm("dose", [field("prescriptionId", "RX01"), ...AMOUNTS_ONLY({ Morning: "1", Evening: "0.5" })]));
+  assert.deepEqual(lastSent("changePrescriptionDose").doses, [
+    { timeOfDay: "Morning", amount: 1, unit: "" },
+    { timeOfDay: "Evening", amount: 0.5, unit: "" },
+  ], "nothing on the phone claims to know the unit");
+  assert.deepEqual(
+    world.ctx.db.rows("PrescriptionDoses").filter(d => d.prescription_id === "RX01").map(d => [d.time_of_day, d.amount, d.unit]),
+    [["Morning", "1", "tablet"], ["Evening", "0.5", "tablet"]],
+    "MED01 is a Tablet, so both rows are tablets",
+  );
+  assert.equal(S.screen, "detail");
+  assert.match(S.toast, /new dose is saved/);
+});
+
+test("adding a medicine to the list sends no unit either, and it saves", async () => {
+  await fresh();
+  await clickOn({ addPrescription: "" });
+  await submitOf(makeForm("prescription", [
+    field("medicineId", "MED05"), field("frequency", "Daily"), field("mealTiming", "Any time"),
+    ...AMOUNTS_ONLY({ Morning: "2" }), field("doctorId", ""), field("notes", ""),
+  ]));
+  const sent = lastSent("addPrescription");
+  assert.deepEqual(sent.doses, [{ timeOfDay: "Morning", amount: 2, unit: "" }]);
+  const rx = world.ctx.db.rows("Prescriptions").find(r => r.medicine_id === "MED05" && r.status === "Active");
+  assert.ok(rx, "the prescription reached the Sheet");
+  assert.deepEqual(
+    world.ctx.db.rows("PrescriptionDoses").filter(d => d.prescription_id === rx.prescription_id).map(d => d.unit),
+    ["tablet"],
+  );
+});
+
+// The unit word beside the box follows what is typed without a re-render: a re-render per
+// keystroke costs him the keyboard mid-word, and one on blur would fight him for the focus.
+test("typing an amount rewrites the unit word beside it, and re-renders nothing", async () => {
+  await fresh();
+  await clickOn({ changeDose: "RX01" });
+  const word = { textContent: "tablets" };
+  const box = {
+    value: "1",
+    getAttribute: name => (name === "data-unit" ? "tablet" : null),
+    parentElement: { querySelector: sel => (sel.includes("data-unit-word") ? word : null) },
+    closest: sel => (sel.includes("form[data-form]") ? { dataset: { form: "dose" } } : null),
+  };
+  listeners.get("input")({ target: box });
+  assert.equal(word.textContent, "tablet", "1 tablet");
+  box.value = "2";
+  listeners.get("input")({ target: box });
+  assert.equal(word.textContent, "tablets", "2 tablets");
+  box.value = "";
+  listeners.get("input")({ target: box });
+  assert.equal(word.textContent, "tablets", "an empty box reads as the plural");
+  assert.equal(S.screen, "doseForm", "still on the form, nothing re-rendered out from under him");
 });

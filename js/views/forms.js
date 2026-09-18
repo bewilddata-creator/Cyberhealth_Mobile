@@ -8,7 +8,7 @@
 // his daughter, reading a phone, sometimes without glasses.
 import { esc } from "../html.js";
 import { I } from "../icons.js";
-import { TIMES_OF_DAY, FREQ, WEEKDAYS } from "../schedule.js";
+import { TIMES_OF_DAY, FREQ, WEEKDAYS, MEDICINE_FORMS, unitForMedicineForm, pluralUnit, medicineNameParts } from "../schedule.js";
 
 // The exact strings the Sheet and server accept, paired with what the family reads.
 const FREQ_LABELS = [
@@ -37,27 +37,48 @@ function saveButton(busy, label) {
   return `<button class="primary" ${busy ? "disabled" : ""}>${busy ? "Saving…" : esc(label)}</button>`;
 }
 
-// One amount + unit pair per time of day, blank meaning "nothing at this time". The amount box
-// stays a real number input (the phone shows a number pad) but is never pre-filled with 0 -- an
-// empty box has to mean "not then". min is 0.01 rather than 0 so the phone catches a typed 0
-// itself, instead of letting it travel to the server only to come back as an error; half and
-// quarter tablets still go through.
+// One amount per time of day, blank meaning "nothing at this time". The amount box stays a real
+// number input (the phone shows a number pad) but is never pre-filled with 0 -- an empty box has
+// to mean "not then". min is 0.01 rather than 0 so the phone catches a typed 0 itself, instead of
+// letting it travel to the server only to come back as an error; half and quarter tablets still
+// go through.
 //
-// The two columns carry a heading that stays on screen: a placeholder vanishes the moment he
-// starts typing, which is exactly when he still needs to know which box is which.
-function doseRows(doses) {
+// What the amount is counted in is NOT asked for: the medicine's form already says it (a Tablet
+// is counted in tablets), so it stands beside the box as fixed text -- "Morning [2] tablets".
+// Typing "tablet" four times to record one prescription was four chances to type it differently.
+// js/app.js keeps that word in step with what is typed; the server derives it again from the
+// medicine and never trusts what the phone sends.
+//
+// A Cream, an Other or a medicine with no form has no unit to derive -- that is the escape hatch
+// for anything counted in its own words, insulin above all -- so for those, and only those, the
+// second box comes back and asks.
+function doseRows(doses, medicineForm) {
+  const unit = unitForMedicineForm(medicineForm);
   const byTime = new Map();
   (doses || []).forEach(d => { if (d && !byTime.has(d.timeOfDay)) byTime.set(d.timeOfDay, d); });
+  // The columns carry a heading that stays on screen: a placeholder vanishes the moment he
+  // starts typing, which is exactly when he still needs to know which box is which.
   const head = `<div class="form-row dose-row dose-head" aria-hidden="true"><span></span>
-    <div class="dose-line"><span>How much</span><span>Tablets, ml, drops…</span></div></div>`;
+    <div class="dose-line${unit ? " fixed-unit" : ""}"><span>How much</span>${unit ? "" : `<span>Tablets, ml, drops…</span>`}</div></div>`;
   return head + TIMES_OF_DAY.map(t => {
     const d = byTime.get(t);
+    const amount = d ? val(d.amount) : "";
+    const second = unit
+      ? `<span class="unit-word" data-unit-word aria-label="${esc(unit)}">${esc(pluralUnit(unit, d ? d.amount : ""))}</span>`
+      : `<input id="f-unit-${t}" name="unit${t}" value="${d ? val(d.unit) : ""}" type="text" placeholder="tablet, ml" autocomplete="off" aria-label="What the ${t} amount is counted in, like tablet or ml">`;
     return `<div class="form-row dose-row"><label for="f-amount-${t}">${t}</label>
-      <div class="dose-line">
-        <input id="f-amount-${t}" name="amount${t}" value="${d ? val(d.amount) : ""}" type="number" inputmode="decimal" min="0.01" step="any" placeholder="How much">
-        <input id="f-unit-${t}" name="unit${t}" value="${d ? val(d.unit) : ""}" type="text" placeholder="tablet, ml" autocomplete="off" aria-label="What the ${t} amount is counted in, like tablet or ml">
+      <div class="dose-line${unit ? " fixed-unit" : ""}">
+        <input id="f-amount-${t}" name="amount${t}" value="${amount}" type="number" inputmode="decimal" min="0.01" step="any" placeholder="How much"${unit ? ` data-unit="${esc(unit)}"` : ""}>
+        ${second}
       </div></div>`;
   }).join("");
+}
+
+// The medicine whose form decides the unit: on the prescription form, whichever one is picked
+// right now (the picker re-renders the page, so the word beside every box follows the pick).
+function pickedMedicine(model) {
+  const id = model.medicineId;
+  return id ? (model.medicines || []).find(m => m && m.medicine_id === id) || null : null;
 }
 
 const DOSE_HINT = `<p class="note">Type how much to take at each time of day. Leave a time empty if there's nothing to take then.</p>`;
@@ -68,17 +89,44 @@ const MEDICINE_FIELDS = [
   ["generic_name", "Medicine name, like Amlodipine", "text", true],
   ["brand_name", "Brand name, if the box shows a different one (optional)", "text", false],
   ["strength", "Strength, like 5 mg (optional)", "text", false],
-  ["form", "What kind it is — tablet, capsule, drops (optional)", "text", false],
+  ["form", "What kind it is — this is what the doses get counted in", "form", false],
   ["purpose", "What it's for, like blood pressure (optional)", "text", false],
   ["notes", "Anything else worth remembering (optional)", "textarea", false],
 ];
+
+// What kind of medicine it is, picked from the Sheet's own list rather than typed, because this
+// is now the answer to "a dose of this is one what?" -- a typed "tablets" would match nothing and
+// send him back to typing the unit by hand on every prescription. Each choice says what it means
+// in his words. A value already in the Sheet that is not on the list keeps an option of its own,
+// so opening this form and saving can never quietly erase it.
+const FORM_LABELS = {
+  Tablet: "Tablet — counted in tablets",
+  Capsule: "Capsule — counted in capsules",
+  Liquid: "Liquid — counted in ml",
+  Injection: "Injection — counted in injections",
+  Inhaler: "Inhaler — counted in puffs",
+  Drops: "Drops — counted in drops",
+  Patch: "Patch — counted in patches",
+  Cream: "Cream or ointment",
+  Other: "Something else — you'll type the unit yourself",
+};
+function formPicker(value) {
+  const current = String(value == null ? "" : value).trim();
+  const known = MEDICINE_FORMS.slice();
+  if (current && !known.some(f => f.toLowerCase() === current.toLowerCase())) known.push(current);
+  const options = known.map(f =>
+    `<option value="${val(f)}" ${f.toLowerCase() === current.toLowerCase() ? "selected" : ""}>${esc(FORM_LABELS[f] || f)}</option>`).join("");
+  return `<select id="f-form" name="form"><option value="" ${current ? "" : "selected"}>Not set — you'll type the unit yourself</option>${options}</select>`;
+}
 
 export function renderMedicineForm({ medicine, error, busy }) {
   const med = medicine || {};
   const editing = !!med.medicine_id;
   const fields = MEDICINE_FIELDS.map(([name, label, type, required]) => `<div class="field"><label for="f-${name}">${esc(label)}</label>${type === "textarea"
     ? `<textarea id="f-${name}" name="${name}" rows="3">${val(med[name])}</textarea>`
-    : `<input id="f-${name}" name="${name}" value="${val(med[name])}" type="${type}" autocomplete="off" ${required ? "required" : ""}>`}</div>`).join("");
+    : type === "form"
+      ? formPicker(med[name])
+      : `<input id="f-${name}" name="${name}" value="${val(med[name])}" type="${type}" autocomplete="off" ${required ? "required" : ""}>`}</div>`).join("");
   return `${topBar(editing ? "Edit this medicine" : "New medicine")}
     <h1 class="big">${editing ? "Edit this medicine" : "Add a medicine"}</h1>
     <p class="note">This is the medicine itself, as it's written on the box. How much to take, and when, is set separately for each person.</p>
@@ -95,11 +143,16 @@ export function renderMedicineForm({ medicine, error, busy }) {
 function medicinePicker(model) {
   const medicines = model.medicines || [];
   const options = medicines.map(m => {
-    const label = [m.generic_name, m.strength].filter(Boolean).join(" ");
+    // The same brand-first name the lists show, so the one he picks here is the one he read on
+    // the box. Plain text: an <option> has no markup.
+    const parts = medicineNameParts(m);
+    const label = [parts.name, parts.strength].filter(Boolean).join(" ");
     return `<option value="${val(m.medicine_id)}" ${m.medicine_id === model.medicineId ? "selected" : ""}>${esc(label)}</option>`;
   }).join("");
+  // data-medpick re-renders the form on a pick (the same hook data-freq uses): the medicine is
+  // what decides the unit beside each amount box, so the word has to follow the choice.
   return `<div class="form-row"><label for="f-medicine">Which medicine?</label>
-      <select id="f-medicine" name="medicineId" required>
+      <select id="f-medicine" name="medicineId" data-medpick required>
         <option value="">Choose one…</option>${options}
       </select></div>
     <button type="button" class="primary light" data-new-medicine>It's not in the list — add it</button>`;
@@ -161,7 +214,7 @@ export function renderPrescriptionForm({ model, error, busy }) {
       ${mealRow(m)}
       <div class="sec-head"><span class="dash">How much, and when</span></div>
       ${DOSE_HINT}
-      ${doseRows(m.doses)}
+      ${doseRows(m.doses, (pickedMedicine(m) || {}).form)}
       ${doctorRow(m)}
       <div class="form-row"><label for="f-notes">Anything to remember about taking it (optional)</label>
         <textarea id="f-notes" name="notes" rows="2" placeholder="Like: don't take with milk">${val(m.notes)}</textarea></div>
@@ -179,7 +232,7 @@ export function renderDoseForm({ model, error, busy }) {
     <form class="edit-form" data-form="dose">
       ${m.prescriptionId ? `<input type="hidden" name="prescriptionId" value="${val(m.prescriptionId)}">` : ""}
       ${DOSE_HINT}
-      ${doseRows(m.doses)}
+      ${doseRows(m.doses, m.medicineForm)}
       ${reasonRow({ ...m, reasonHint: "Like: the doctor halved it" })}
       <p class="note">The old amount stays in this medicine's history, so you can always see what changed and when.</p>
       ${errorLine(error)}

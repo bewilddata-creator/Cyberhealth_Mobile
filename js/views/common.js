@@ -1,5 +1,6 @@
 import { esc, telHref } from "../html.js";
 import { I } from "../icons.js";
+import { medicineNameParts } from "../schedule.js";
 import { driveImageUrl } from "../viewmodel.js";
 
 export const SLOT_COLORS = { Morning: ["var(--yellow)", "var(--yellow-2)"], Noon: ["var(--olive)", "var(--olive-2)"], Evening: ["var(--pink)", "var(--pink-2)"], Bedtime: ["var(--blue)", "var(--blue-2)"] };
@@ -32,8 +33,13 @@ export function doctorThumb(doctor, url) {
   const initials = doctor ? doctorInitials(doctor.name) : "";
   return `<span class="thumb" aria-hidden="true">${initials ? esc(initials) : I.team}</span>`;
 }
+// The name on every list, in the detail header and in the forms: the brand first, because that
+// is the word printed on the box he is holding, with the generic in brackets after it. HTML, not
+// plain text -- the strength rides along in its own <em> so it reads lighter than the name.
 export function medName(med) {
-  return med ? `${esc(med.generic_name)} <em>${esc(med.strength)}</em>` : "Unknown medicine";
+  const { name, strength } = medicineNameParts(med);
+  if (!name) return "Unknown medicine";
+  return strength ? `${esc(name)} <em>${esc(strength)}</em>` : esc(name);
 }
 // Only a person whose Medicines this viewer can at least read is worth switching to -- a family
 // member with no grant on anyone but themself sees no switcher at all (options.length < 2).

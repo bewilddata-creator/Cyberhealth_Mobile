@@ -8,6 +8,7 @@ import {
   isDue, doseItemsOn, doseKey, slotStatus, dedupeActivePrescriptions, rolloverDate,
   lastChangeDate, countsOnDay,
   describeFrequency, describeDoses, describeSchedule,
+  MEDICINE_FORMS, unitForMedicineForm, medicineNameParts, pluralUnit,
 } from "../js/schedule.js";
 
 // ---- helpers to build valid rows, overridable per test ----
@@ -419,4 +420,94 @@ test("describeSchedule names an every-N-days schedule and its weekday list", () 
   assert.equal(describeSchedule(every, [{ timeOfDay: "Morning", amount: 1, unit: "shot" }]), "Every 3 days: Morning 1 shot");
   const week = { freq: FREQ.WEEKDAYS, n: 0, days: ["Mon", "Thu"], meal: "Before meal" };
   assert.equal(describeSchedule(week, [{ timeOfDay: "Noon", amount: 1, unit: "capsule" }]), "Mon + Thu, before meal: Noon 1 capsule");
+});
+
+// ---- what a dose is counted in ----
+
+test("unitForMedicineForm gives each kind of medicine its unit", () => {
+  assert.equal(unitForMedicineForm("Tablet"), "tablet");
+  assert.equal(unitForMedicineForm("Capsule"), "capsule");
+  assert.equal(unitForMedicineForm("Liquid"), "ml");
+  assert.equal(unitForMedicineForm("Injection"), "injection");
+  assert.equal(unitForMedicineForm("Inhaler"), "puff");
+  assert.equal(unitForMedicineForm("Drops"), "drop");
+  assert.equal(unitForMedicineForm("Patch"), "patch");
+});
+
+// A cream is not counted at all, and "Other" is the escape hatch for anything measured in its own
+// words -- insulin's international units above all. Inventing a unit for either would put a word
+// on the screen that nobody chose, so both leave the form asking.
+test("unitForMedicineForm invents nothing for a cream, an Other, or a form nobody recognises", () => {
+  assert.equal(unitForMedicineForm("Cream"), "");
+  assert.equal(unitForMedicineForm("Other"), "");
+  assert.equal(unitForMedicineForm(""), "");
+  assert.equal(unitForMedicineForm(null), "");
+  assert.equal(unitForMedicineForm(undefined), "");
+  assert.equal(unitForMedicineForm("Suppository"), "");
+});
+
+// The form column is typed into a spreadsheet by hand as well as picked in the app.
+test("unitForMedicineForm reads a hand-typed form whatever its case and spacing", () => {
+  assert.equal(unitForMedicineForm("  tablet "), "tablet");
+  assert.equal(unitForMedicineForm("CAPSULE"), "capsule");
+  assert.equal(unitForMedicineForm("liQuid"), "ml");
+});
+
+test("every form on the Sheet's own list is one unitForMedicineForm knows what to do with", () => {
+  const withoutUnit = MEDICINE_FORMS.filter(f => !unitForMedicineForm(f));
+  assert.deepEqual(withoutUnit, ["Cream", "Other"], "only a cream and an Other have no unit of their own");
+});
+
+// ---- the name on the box ----
+
+test("medicineNameParts leads with the brand and keeps the generic in brackets", () => {
+  assert.deepEqual(medicineNameParts({ brand_name: "Norvasc", generic_name: "Amlodipine", strength: "5 mg" }),
+    { name: "Norvasc (Amlodipine)", strength: "5 mg" });
+});
+
+test("medicineNameParts falls back to the generic alone when there is no brand", () => {
+  assert.deepEqual(medicineNameParts({ generic_name: "Amlodipine", strength: "5 mg" }),
+    { name: "Amlodipine", strength: "5 mg" });
+  assert.deepEqual(medicineNameParts({ brand_name: "   ", generic_name: "Amlodipine", strength: "5 mg" }),
+    { name: "Amlodipine", strength: "5 mg" });
+});
+
+// A generic sold under its own name: "Metformin (Metformin) 500 mg" reads like a bug.
+test("medicineNameParts says one name once when the brand and the generic are the same word", () => {
+  assert.equal(medicineNameParts({ brand_name: "Metformin", generic_name: "metformin" }).name, "Metformin");
+  assert.equal(medicineNameParts({ brand_name: " Metformin ", generic_name: "Metformin" }).name, "Metformin");
+  // Matched on the flattened spelling, but shown exactly as the brand is stored -- a value typed
+  // into the Sheet is never quietly rewritten.
+  assert.equal(medicineNameParts({ brand_name: "Co  trimoxazole", generic_name: "Co trimoxazole" }).name, "Co  trimoxazole");
+});
+
+test("medicineNameParts keeps the brand when that is the only name there is", () => {
+  assert.equal(medicineNameParts({ brand_name: "Norvasc" }).name, "Norvasc");
+});
+
+test("medicineNameParts returns empty parts for a missing or nameless medicine", () => {
+  assert.deepEqual(medicineNameParts(null), { name: "", strength: "" });
+  assert.deepEqual(medicineNameParts(undefined), { name: "", strength: "" });
+  assert.deepEqual(medicineNameParts({}), { name: "", strength: "" });
+  assert.deepEqual(medicineNameParts({ strength: "5 mg" }), { name: "", strength: "5 mg" });
+});
+
+test("pluralUnit is exported for the forms to read '1 tablet' / '2 tablets'", () => {
+  assert.equal(pluralUnit("tablet", 1), "tablet");
+  assert.equal(pluralUnit("tablet", 2), "tablets");
+  assert.equal(pluralUnit("tablet", ""), "tablets", "an empty amount box reads as the plural");
+  assert.equal(pluralUnit("ml", 5), "ml");
+  assert.equal(pluralUnit("patch", 2), "patches");
+  assert.equal(pluralUnit("puff", 0.5), "puffs");
+});
+
+// "18 unitses" on the medicine list. A hand-typed unit is usually already plural, and the Other
+// escape hatch -- insulin's "units" -- is where hand-typed units now live.
+test("pluralUnit leaves a unit that is already plural alone", () => {
+  assert.equal(pluralUnit("units", 18), "units");
+  assert.equal(pluralUnit("drops", 2), "drops");
+  assert.equal(pluralUnit("puffs", 2), "puffs");
+  assert.equal(pluralUnit("units", 1), "units", "and one of them is still 'units'");
+  assert.equal(pluralUnit("patch", 2), "patches", "a real singular still gets its -es");
+  assert.equal(pluralUnit("box", 2), "boxes");
 });

@@ -58,6 +58,11 @@ export function sampleTables(sha256) {
       row("Medicines", ["MED10", "Calcium carbonate", "", "500 mg", "Tablet", "Bones", "", "", "", "", "", "", "2024-01-01", "U01", "", ""]),
       row("Medicines", ["MED11", "Cetirizine", "Zyrtec", "10 mg", "Tablet", "Allergies", "", "", "", "", "", "", "2024-01-01", "U02", "", ""]),
       row("Medicines", ["MED12", "Ibuprofen", "Advil", "400 mg", "Tablet", "Pain", "", "", "", "", "", "", "2024-01-01", "U02", "", ""]),
+      // A syrup and an insulin, so the browser mock covers both halves of the unit rule: a Liquid
+      // is counted in ml with nothing to type, and an Other hands the typing back -- insulin is
+      // counted in international units, which no form implies.
+      row("Medicines", ["MED13", "Lactulose", "Duphalac", "10 g/15 ml", "Liquid", "Constipation", "", "", "", "", "", "", "2024-01-01", "U01", "", ""]),
+      row("Medicines", ["MED14", "Insulin glargine", "Lantus", "100 units/ml", "Other", "Blood sugar", "Counted in units", "", "", "", "", "", "2024-01-01", "U01", "", ""]),
     ],
     Hospitals: [
       row("Hospitals", ["HOS01", "Riverside General Hospital", "02-555-0110", "88 Riverside Rd", "", "", "2024-01-01", "U01", "", ""]),

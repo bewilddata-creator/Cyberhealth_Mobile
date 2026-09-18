@@ -12,6 +12,25 @@ const MEAL_TIMING_VALUES = ["Before meal", "After meal", "With meal", "Any time"
 
 const txt = v => String(v == null ? "" : v).trim();
 
+// Stamps every dose row with the unit the medicine's own form implies, throwing away whatever
+// unit the phone sent. The unit is a fact about the medicine, not a per-dose choice, so the
+// server decides it from the Medicines row and never trusts the caller: a phone running an old
+// build, or a hand-made request, cannot put "pill" on a Tablet.
+//
+// A form with no unit of its own (Cream, Other, blank) returns the rows untouched, so the unit
+// the caller typed stands -- that is the deliberate escape hatch for anything counted in its own
+// words. validateDoses still insists it is not blank.
+//
+// An existing prescription whose stored unit disagrees with its medicine's form is corrected the
+// next time its dose is edited, and the correction shows in the history like any other change
+// (the before/after wording carries the unit, so "Morning 1 pill → Morning 1 tablet" is legible).
+function dosesWithMedicineUnit(doses, medicineForm) {
+  const list = Array.isArray(doses) ? doses : [];
+  const derived = unitForMedicineForm(medicineForm);
+  if (!derived) return list;
+  return list.map(d => (d && typeof d === "object" ? { ...d, unit: derived } : d));
+}
+
 function validateDoses(doses, frequency) {
   const list = Array.isArray(doses) ? doses : [];
   const fail = reason => ({ ok: false, reason });

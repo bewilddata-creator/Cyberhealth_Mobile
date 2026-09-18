@@ -235,7 +235,7 @@ button.banner.warn{background:var(--yellow-2)}
 .login-form{display:grid;gap:12px}
 .field{display:grid;gap:6px}
 .field label{font-weight:700;font-size:14px}
-.field input,.field textarea{border:0;background:var(--sand);border-radius:18px;padding:14px 16px;font-size:18px;width:100%}
+.field input,.field textarea,.field select{border:0;background:var(--sand);border-radius:18px;padding:14px 16px;font-size:18px;width:100%;min-height:48px}
 .field textarea{font-size:16px;resize:vertical}
 .link{border:0;background:none;font-weight:700;text-decoration:underline;text-decoration-color:var(--pink);text-decoration-thickness:3px;text-underline-offset:4px;padding:8px;align-self:center}
 .warn ul{color:var(--alert)}
@@ -247,6 +247,10 @@ button.banner.warn{background:var(--yellow-2)}
 .form-row select,.form-row input[type=date],.form-row input[type=number],.form-row input[type=text],.form-row textarea{border:0;background:var(--sand);border-radius:18px;padding:14px 16px;font-size:16px;width:100%;min-height:48px}
 .form-row textarea{font-size:16px;resize:vertical;min-height:0}
 .dose-line{display:grid;grid-template-columns:1.2fr 1.5fr;gap:8px}
+/* "Morning [2] tablets": the unit is a word, not a box, so the amount box only needs room for a
+   number and the word takes the rest -- it still fits "injections" on a 320px phone. */
+.dose-line.fixed-unit{grid-template-columns:5.5em minmax(0,1fr)}
+.unit-word{align-self:center;font-weight:700;font-size:15px;color:var(--ink-2);overflow-wrap:anywhere}
 .toggles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
 .toggles.days{grid-template-columns:repeat(7,1fr)}
 .toggle{border:1.5px dashed var(--ink-3);background:var(--paper);border-radius:16px;padding:10px 4px;font-weight:700;font-size:13px;min-height:44px;display:grid;place-items:center;text-align:center}

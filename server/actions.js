@@ -2,8 +2,8 @@
 // Synced to Apps Script by scripts/sync-gs.mjs, so keep imports on one line and names unique.
 import { isActiveUser, publicUser, SECTIONS, grantFor, canRead, canEdit, readableOwners, canTick } from "../js/access.js";
 import { MAX_ATTEMPTS, SESSION_DAYS, makePasswordRecord, verifyPassword, passwordProblem, isResetCode, tokenHash } from "../js/authcore.js";
-import { normalizePrescription, normalizeDose, isDue, bangkokToday, bangkokTimeOfDay, bangkokStamp, addDays, parseDate, TIMES_OF_DAY, FREQ, DOSE_LOG_WINDOW_DAYS, dedupeActivePrescriptions, describeSchedule } from "../js/schedule.js";
-import { validateDoses, validateScheduleFields, MAX_REASON_LENGTH } from "../server/prescriptions.js";
+import { normalizePrescription, normalizeDose, isDue, bangkokToday, bangkokTimeOfDay, bangkokStamp, addDays, parseDate, TIMES_OF_DAY, FREQ, DOSE_LOG_WINDOW_DAYS, dedupeActivePrescriptions, describeSchedule, medicineNameParts } from "../js/schedule.js";
+import { validateDoses, validateScheduleFields, dosesWithMedicineUnit, MAX_REASON_LENGTH } from "../server/prescriptions.js";
 import { isPhotoSlot, photoColumn, parseDataUrl, photoFolderName, photoFileName, MAX_PHOTO_BYTES } from "../server/photos.js";
 
 export class AppError extends Error {
@@ -127,9 +127,14 @@ function personName(users, userId) {
   return u ? u.display_name : "Someone";
 }
 
+// current_medicines on the emergency card, read by a paramedic or a pharmacist off a phone held
+// up at the counter: the brand it says on the box, then the ingredient in brackets, then the
+// strength. Plain text, never HTML -- the card is read as words, and one caller is the public
+// page. medicineNameParts (js/schedule.js) is the same rule medName draws on screen.
 function medicineLabel(med) {
   if (!med) return "";
-  return [str(med.generic_name), str(med.strength)].filter(Boolean).join(" ");
+  const parts = medicineNameParts(med);
+  return [parts.name, parts.strength].filter(Boolean).join(" ");
 }
 
 // One Card per active user. hospital_numbers is attached only when viewerUserId can read
@@ -495,16 +500,19 @@ Object.assign(ACTIONS, {
     const medicineId = str(req.medicineId);
     const schedule = validateScheduleFields(req);
     if (!schedule.ok) throw new AppError("BAD_INPUT", schedule.reason);
-    const doses = validateDoses(req.doses, schedule.fields.frequency);
-    if (!doses.ok) throw new AppError("BAD_INPUT", doses.reason);
     const today = bangkokToday(ctx.nowMs());
     const startedOn = req.startedOn ? parseDate(req.startedOn) : today;
     if (!startedOn) throw new AppError("BAD_INPUT", "The start date must be a real date.");
     if (startedOn > today) throw new AppError("BAD_INPUT", "A medicine can't start in the future. Pick today or a day already past.");
     return ctx.lock(() => {
-      if (!ctx.db.rows("Medicines").some(m => str(m.medicine_id) === medicineId)) {
+      // The medicine is read before the doses are checked because it is what says what a dose of
+      // it is counted in -- the phone no longer sends a unit for anything with a form.
+      const medicine = ctx.db.rows("Medicines").find(m => str(m.medicine_id) === medicineId);
+      if (!medicine) {
         throw new AppError("BAD_INPUT", "That medicine isn't in the list. Add it first.");
       }
+      const doses = validateDoses(dosesWithMedicineUnit(req.doses, medicine.form), schedule.fields.frequency);
+      if (!doses.ok) throw new AppError("BAD_INPUT", doses.reason);
       if (activeConflict(ctx, userId, medicineId, "")) {
         throw new AppError("CONFLICT", "This person is already taking that medicine. Change the one they have instead of adding a second.");
       }
@@ -538,7 +546,11 @@ Object.assign(ACTIONS, {
     return ctx.lock(() => {
       const current = readPrescription(ctx, prescriptionId);
       if (!current) throw new AppError("BAD_INPUT", "That medicine isn't on the list any more. Refresh and try again.");
-      const doses = validateDoses(req.doses, current.prescription.freq);
+      // Same rule as addPrescription: the medicine's form decides the unit, not the phone. A
+      // prescription whose stored unit disagrees with its medicine (someone typed "pill" for a
+      // Tablet) is corrected here, and the history row says so in words.
+      const medicine = ctx.db.rows("Medicines").find(m => str(m.medicine_id) === current.prescription.medicineId);
+      const doses = validateDoses(dosesWithMedicineUnit(req.doses, medicine && medicine.form), current.prescription.freq);
       if (!doses.ok) throw new AppError("BAD_INPUT", doses.reason);
       return applyPrescriptionChange(ctx, user, prescriptionId, "Dose changed", () => {
         if (req.doctorId !== undefined) ctx.db.update("Prescriptions", "prescription_id", prescriptionId, { doctor_id: str(req.doctorId) });

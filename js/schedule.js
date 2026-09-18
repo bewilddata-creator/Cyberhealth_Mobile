@@ -238,10 +238,57 @@ export function describeFrequency(prescription) {
   return "When needed";
 }
 
-function pluralUnit(unit, amount) {
+// ---- the medicine itself ----
+//
+// What a dose of a medicine is counted in, worked out from the medicine's own form (the Sheet's
+// Lists tab defines both vocabularies). Nobody types the unit four times over: a Tablet is
+// counted in tablets and always was, and the only thing typing it again can add is a typo.
+//
+// Cream, Other and a blank or unrecognised form deliberately return "" -- there is no honest
+// unit to invent for a cream, and "Other" is the escape hatch for anything counted in its own
+// words (insulin's international units): set the form to Other and the dose form asks for one.
+// The Sheet's Lists tab "Form" column, in its order. Every value here is one the Sheet's own
+// dropdown offers, so a medicine typed in the app and one typed in the Sheet say the same thing.
+export const MEDICINE_FORMS = ["Tablet", "Capsule", "Liquid", "Injection", "Inhaler", "Cream", "Drops", "Patch", "Other"];
+const UNIT_BY_MEDICINE_FORM = {
+  tablet: "tablet",
+  capsule: "capsule",
+  liquid: "ml",
+  injection: "injection",
+  inhaler: "puff",
+  drops: "drop",
+  patch: "patch",
+};
+export function unitForMedicineForm(form) {
+  const key = String(form == null ? "" : form).trim().toLowerCase();
+  return Object.prototype.hasOwnProperty.call(UNIT_BY_MEDICINE_FORM, key) ? UNIT_BY_MEDICINE_FORM[key] : "";
+}
+
+// A medicine's name split into the part that names it and the part that says how strong it is,
+// so the HTML view can style the strength and the plain-text emergency card can just join them.
+//
+// Brand first, because the brand is what is printed large on the box in his hand -- he reads
+// "Norvasc" there and needs to find it on the screen. The generic follows in brackets for the
+// doctor or pharmacist reading the emergency card, who needs the ingredient, not the trade name.
+// When the two are the same word (a generic sold under its own name) it is said once.
+export function medicineNameParts(med) {
+  const t = v => String(v == null ? "" : v).trim();
+  const flat = v => t(v).replace(/\s+/g, " ").toLowerCase();
+  const brand = t(med && med.brand_name);
+  const generic = t(med && med.generic_name);
+  const same = brand && generic && flat(brand) === flat(generic);
+  const name = !brand ? generic : (!generic || same ? brand : `${brand} (${generic})`);
+  return { name, strength: t(med && med.strength) };
+}
+
+export function pluralUnit(unit, amount) {
   if (Number(amount) === 1) return unit;
   if (unit === "ml" || unit === "other") return unit;
-  if (/(s|x|z|ch|sh)$/.test(unit)) return `${unit}es`;
+  // A unit that already ends in "s" is a unit somebody typed in the plural -- insulin's "units"
+  // above all, which is exactly what the Other escape hatch is for. Adding "es" to it gave
+  // "18 unitses" on the medicine list, which reads as a broken screen.
+  if (/s$/.test(unit)) return unit;
+  if (/(x|z|ch|sh)$/.test(unit)) return `${unit}es`;
   return `${unit}s`;
 }
 

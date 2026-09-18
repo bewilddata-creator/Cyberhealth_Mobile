@@ -189,3 +189,58 @@ test("renderMore lists Sheet problems (as { user_id, message } objects) and comi
   assert.ok(html.includes("data-logout"));
   assert.ok(html.includes("data-refresh"));
 });
+
+// ---- the name he actually reads on the box ----
+//
+// The box in his hand says "Norvasc"; the Sheet's generic_name says "Amlodipine". Until the brand
+// was shown, Today and Meds named a medicine he could not match to anything in the cupboard.
+
+const medsWith = medicine => renderMeds({
+  model: { active: [{ prescription: { id: "RX01" }, medicine, summary: "Every day · Morning 1 tablet" }], stopped: [] },
+  ctx,
+});
+
+test("renderMeds leads with the brand and keeps the generic in brackets", () => {
+  const html = medsWith({ generic_name: "Amlodipine", brand_name: "Norvasc", strength: "5 mg" });
+  assert.match(html, /Norvasc \(Amlodipine\) <em>5 mg<\/em>/);
+});
+
+test("renderMeds shows the generic alone, exactly as before, when there is no brand", () => {
+  assert.match(medsWith({ generic_name: "Amlodipine", strength: "5 mg" }), /Amlodipine <em>5 mg<\/em>/);
+});
+
+test("renderMeds says a generic sold under its own name once, not twice", () => {
+  // Matched without regard to case; shown as the brand is spelled, since that is the box.
+  const html = medsWith({ generic_name: "metformin", brand_name: "Metformin", strength: "500 mg" });
+  assert.ok(!html.includes("(Metformin)") && !html.includes("(metformin)"), html);
+  assert.match(html, /Metformin <em>500 mg<\/em>/);
+});
+
+test("renderMeds leaves out the strength cleanly when there isn't one — no empty <em>", () => {
+  const html = medsWith({ generic_name: "Amlodipine", brand_name: "Norvasc" });
+  assert.match(html, /class="name">Norvasc \(Amlodipine\)<\/div>/);
+  assert.ok(!html.includes("<em>"), "an empty <em> would leave a stray gap on the row");
+});
+
+test("renderMeds falls back to 'Unknown medicine' when the row has no name at all", () => {
+  assert.match(medsWith(null), /Unknown medicine/);
+  assert.match(medsWith({}), /Unknown medicine/);
+});
+
+test("renderMeds escapes a malicious brand name too", () => {
+  const html = medsWith({ generic_name: "Amlodipine", brand_name: `<img src=x onerror=alert(1)>`, strength: `"5 mg"` });
+  assert.ok(!html.includes("<img"), html);
+  assert.ok(html.includes("&lt;img"));
+  assert.ok(html.includes("&quot;5 mg&quot;"));
+});
+
+test("renderDetail's heading carries the brand as well", () => {
+  const model = {
+    prescription: { id: "RX01", meal: "Any time", status: "Active" },
+    medicine: { medicine_id: "MED01", generic_name: "Amlodipine", brand_name: "Norvasc", strength: "5 mg" },
+    doses: [{ timeOfDay: "Morning", amount: 1, unit: "tablet" }],
+    photos: [{ label: "Box", slot: "box", url: "" }],
+    doctor: null, hospital: null, hn: "", history: [],
+  };
+  assert.match(renderDetail({ model, photo: 0 }), /<h1 class="big">Norvasc \(Amlodipine\) <em>5 mg<\/em><\/h1>/);
+});

@@ -337,3 +337,101 @@ test("a logged-out caller may not touch the library", () => {
   assert.equal(r.ok, false);
   assert.equal(r.error.code, "AUTH_REQUIRED");
 });
+
+// ---- the unit is the server's to decide, not the phone's ----
+//
+// A dose row still carries a unit and DoseLog still snapshots one at tick time: nothing about the
+// stored shape changes. What changes is where the value comes from -- the medicine's own form,
+// read on the server, instead of four boxes he types the same word into.
+
+const addFor = (ctx, token, over = {}) => handle({
+  action: "addPrescription", token, userId: "U01", medicineId: "MED-NEW", frequency: "Daily",
+  doses: [{ timeOfDay: "Morning", amount: 1, unit: "tablet" }], ...over,
+}, ctx);
+const dosesOf = (ctx, id) => ctx.db.rows("PrescriptionDoses").filter(d => d.prescription_id === id).map(d => `${d.time_of_day} ${d.amount} ${d.unit}`);
+
+test("addPrescription writes the unit the medicine's form implies, not the one it was sent", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Dad", "dad123");
+  ctx.db.append("Medicines", { medicine_id: "MED-NEW", generic_name: "Lactulose", form: "Liquid" });
+  // "tablet" is what an old phone, or anything hand-made, would still send for a syrup.
+  const r = addFor(ctx, token, { doses: [{ timeOfDay: "Morning", amount: 15, unit: "tablet" }] });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(dosesOf(ctx, r.data.prescription.prescription_id), ["Morning 15 ml"]);
+});
+
+test("addPrescription needs no unit at all from the phone when the medicine has a form", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Dad", "dad123");
+  ctx.db.append("Medicines", { medicine_id: "MED-NEW", generic_name: "Seretide", form: "Inhaler" });
+  const r = addFor(ctx, token, { doses: [{ timeOfDay: "Morning", amount: 2 }, { timeOfDay: "Bedtime", amount: 1, unit: "" }] });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(dosesOf(ctx, r.data.prescription.prescription_id), ["Morning 2 puff", "Bedtime 1 puff"]);
+  const changes = ctx.db.rows("PrescriptionChanges").filter(c => c.prescription_id === r.data.prescription.prescription_id);
+  assert.match(changes[0].after, /Morning 2 puffs, Bedtime 1 puff/, "the history reads in plain words");
+});
+
+// The escape hatch the owner asked for, in the one shape it matters: insulin, counted in
+// international units, which no form implies and nobody should have invented one for.
+test("a medicine set to Other still takes the unit that was typed — insulin's 'units'", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Dad", "dad123");
+  ctx.db.append("Medicines", { medicine_id: "MED-NEW", generic_name: "Insulin glargine", form: "Other" });
+  const r = addFor(ctx, token, { doses: [{ timeOfDay: "Bedtime", amount: 18, unit: "units" }] });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(dosesOf(ctx, r.data.prescription.prescription_id), ["Bedtime 18 units"]);
+});
+
+test("a cream, an Other or a medicine with no form is refused a blank unit, in plain words", () => {
+  for (const form of ["Cream", "Other", ""]) {
+    const ctx = fakeCtx();
+    const token = loginAs(ctx, "Dad", "dad123");
+    ctx.db.append("Medicines", { medicine_id: "MED-NEW", generic_name: "Hydrocortisone", form });
+    const r = addFor(ctx, token, { doses: [{ timeOfDay: "Morning", amount: 1, unit: "" }] });
+    assert.equal(r.ok, false, `${form || "(blank)"} should be refused`);
+    assert.equal(r.error.code, "BAD_INPUT");
+    assert.match(r.error.message, /needs a unit, like tablet or ml/);
+  }
+});
+
+// Agreed with the owner: a prescription typed with the wrong word is quietly put right the next
+// time its dose is edited, and the correction is in the history like any other change -- the
+// before/after carry the unit, so "Morning 2 pills → Morning 1 tablet" says exactly what moved.
+test("a dose edit corrects a stored unit that disagrees with the medicine, and the history says so", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Pim", "pim123");
+  ctx.db.update("PrescriptionDoses", "dose_id", "DS01", { unit: "pill" });
+  const r = handle({ action: "changePrescriptionDose", token, prescriptionId: "RX01", doses: [{ timeOfDay: "Morning", amount: 1 }] }, ctx);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(dosesOf(ctx, "RX01"), ["Morning 1 tablet"], "MED01 is a Tablet, so the dose row is a tablet");
+  const rows = ctx.db.rows("PrescriptionChanges").filter(c => c.prescription_id === "RX01");
+  const change = rows[rows.length - 1];
+  assert.match(change.before, /Morning 2 pills/);
+  assert.match(change.after, /Morning 1 tablet/);
+});
+
+test("a dose edit leaves history already written exactly as it reads today", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Pim", "pim123");
+  const before = ctx.db.rows("PrescriptionChanges").map(c => `${c.change_id}|${c.before}|${c.after}`);
+  handle({ action: "changePrescriptionDose", token, prescriptionId: "RX01", doses: [{ timeOfDay: "Morning", amount: 1 }] }, ctx);
+  const after = ctx.db.rows("PrescriptionChanges").map(c => `${c.change_id}|${c.before}|${c.after}`);
+  assert.deepEqual(after.slice(0, before.length), before, "old history rows are never rewritten");
+});
+
+// The stored shape does not change: DoseLog still snapshots the unit at tick time, so a dose
+// already taken keeps reading as what went in his mouth even after the prescription moves on.
+test("a tick still snapshots the unit of the dose it was taken against", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Dad", "dad123");
+  const today = handle({ action: "bootstrap", token }, ctx).data.today;
+  // DS01 is RX01's Morning dose in the fixture: 2 tablets of MED01, a Tablet.
+  const r = handle({ action: "tick", token, prescriptionId: "RX01", date: today, timeOfDay: "Morning", doseId: "DS01", amount: 2 }, ctx);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const log = ctx.db.rows("DoseLog").find(l => l.prescription_id === "RX01");
+  assert.equal(log.unit, "tablet");
+  assert.equal(log.amount_taken, "2");
+  // And a later dose change does not reach back and rewrite it.
+  handle({ action: "changePrescriptionDose", token, prescriptionId: "RX01", doses: [{ timeOfDay: "Morning", amount: 1 }] }, ctx);
+  assert.equal(ctx.db.rows("DoseLog").find(l => l.prescription_id === "RX01").amount_taken, "2");
+});

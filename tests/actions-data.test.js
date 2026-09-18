@@ -450,3 +450,25 @@ test("saveEmergencyCard requires login", () => {
   const ctx = fakeCtx();
   assert.equal(code(handle({ action: "saveEmergencyCard", fields: { blood_type: "O+" } }, ctx)), "AUTH_REQUIRED");
 });
+
+// ---- the emergency card names the box, not just the ingredient ----
+//
+// The card is read by a paramedic or a pharmacist off a phone screen. The brand is what is
+// written on the box at home; the generic is what they need to dispense. Both, in that order.
+
+test("current_medicines leads with the brand and keeps the generic in brackets", () => {
+  const ctx = fakeCtx();
+  ctx.db.update("Medicines", "medicine_id", "MED01", { brand_name: "Norvasc" });
+  ctx.db.update("Medicines", "medicine_id", "MED02", { brand_name: "Glucophage" });
+  const dad = handle({ action: "publicEmergency" }, ctx).data.find(c => c.user_id === "U01");
+  assert.deepEqual(dad.current_medicines, ["Norvasc (Amlodipine) 5 mg", "Glucophage (Metformin) 500 mg", "Epoetin alfa 4,000 IU"]);
+});
+
+test("current_medicines says a generic sold under its own name once, and stays plain text", () => {
+  const ctx = fakeCtx();
+  ctx.db.update("Medicines", "medicine_id", "MED02", { brand_name: "METFORMIN" });
+  ctx.db.update("Medicines", "medicine_id", "MED03", { brand_name: "<b>Eprex</b>", strength: "" });
+  const dad = handle({ action: "publicEmergency" }, ctx).data.find(c => c.user_id === "U01");
+  assert.deepEqual(dad.current_medicines, ["Amlodipine 5 mg", "METFORMIN 500 mg", "<b>Eprex</b> (Epoetin alfa)"]);
+  assert.ok(dad.current_medicines.every(m => !m.includes("(")|| !m.includes("()")), "never an empty bracket");
+});

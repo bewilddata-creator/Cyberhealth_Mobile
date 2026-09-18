@@ -1,5 +1,5 @@
 import { call, getToken, setToken, getApiUrl, setApiUrl } from "./api.js";
-import { bangkokToday, bangkokTimeOfDay, bangkokHour, bangkokStamp, addDays, rolloverDate, TIMES_OF_DAY, FREQ } from "./schedule.js";
+import { bangkokToday, bangkokTimeOfDay, bangkokHour, bangkokStamp, addDays, rolloverDate, TIMES_OF_DAY, FREQ, pluralUnit, medicineNameParts } from "./schedule.js";
 import { indexBoot, todayModel, weekModel, warningsForOwner, defaultOwnerId, detailModel, doctorsModel } from "./viewmodel.js";
 import { pickImage, shrinkToDataUrl } from "./photoinput.js";
 import { esc } from "./html.js";
@@ -205,10 +205,13 @@ function currentDoseFor(prescriptionId, timeOfDay) {
   const doses = S.idx.dosesByPrescription.get(prescriptionId) || [];
   return doses.find(d => d.timeOfDay === timeOfDay) || null;
 }
+// The medicine's name as plain text, for a confirm(), a toast or a form heading. Brand-led, the
+// same as the lists show, so a question about "Norvasc" is a question about the box in his hand.
 function prescriptionName(prescriptionId) {
   const p = S.idx.prescriptions.get(prescriptionId);
   const m = p && S.idx.medicines.get(p.medicineId);
-  return m ? m.generic_name : "this medicine";
+  const name = m ? medicineNameParts(m).name : "";
+  return name || "this medicine";
 }
 
 async function tick(key) {
@@ -299,7 +302,8 @@ function ownerName() {
 }
 function medicineNameOf(medicineId) {
   const m = S.idx && S.idx.medicines.get(medicineId);
-  return m ? m.generic_name : "this medicine";
+  const name = m ? medicineNameParts(m).name : "";
+  return name || "this medicine";
 }
 function medicineOptions() {
   return [...S.idx.medicines.values()].sort((a, b) => String(a.generic_name).localeCompare(String(b.generic_name)));
@@ -340,7 +344,17 @@ export function formModel() {
   const m = S.form || {};
   if (S.screen === "prescriptionForm") return { ...m, ownerName: ownerName(), medicines: medicineOptions(), doctors: doctorOptions(m.doctorId) };
   if (S.screen === "scheduleForm") return { ...m, doctors: doctorOptions(m.doctorId) };
+  // What a dose of this medicine is counted in comes from the medicine's form, and is looked up
+  // here rather than frozen into S.form, so editing the medicine mid-flow is reflected at once.
+  if (S.screen === "doseForm") return { ...m, medicineForm: medicineFormOf(m.prescriptionId) };
   return m;
+}
+
+// The "Tablet"/"Liquid"/… of the medicine behind a prescription, which is what decides the unit.
+function medicineFormOf(prescriptionId) {
+  const p = prescriptionId && S.idx ? S.idx.prescriptions.get(prescriptionId) : null;
+  const m = p && S.idx.medicines.get(p.medicineId);
+  return m ? m.form : "";
 }
 
 // A row whose amount box is blank means "nothing at this time of day" and is left out of the
@@ -775,13 +789,25 @@ root.addEventListener("change", e => {
   S.form = harvestForm(form);
   // data-freq is the re-render hook (amendment I). The every-N-days, count-from and weekday rows
   // are only on the page for their own frequency, so without this they cannot be reached at all.
-  if (el.matches("[data-freq]")) render();
+  // data-medpick is the same hook for the medicine: it decides what the doses are counted in, so
+  // picking a different one has to redraw the word beside each amount box -- and put the unit box
+  // back when the medicine is a cream or an "Other" with no unit of its own.
+  if (el.matches("[data-freq], [data-medpick]")) render();
 });
 
 // Whether there is anything to lose if the back arrow is tapped. Never re-renders: a re-render
 // per keystroke is how a phone loses its keyboard mid-word.
 root.addEventListener("input", e => {
-  if (e.target.closest && e.target.closest("form[data-form]")) S.formDirty = true;
+  const el = e.target;
+  if (el.closest && el.closest("form[data-form]")) S.formDirty = true;
+  // "1 tablet" / "2 tablets" beside the amount box, kept in step with what is being typed. The
+  // one word is rewritten in place rather than the form re-rendered: a re-render per keystroke is
+  // how a phone loses its keyboard mid-word, and a re-render on blur would fight him for the
+  // focus as he moves from Morning to Noon.
+  const unit = el.getAttribute && el.getAttribute("data-unit");
+  if (!unit) return;
+  const word = el.parentElement && el.parentElement.querySelector("[data-unit-word]");
+  if (word) word.textContent = pluralUnit(unit, el.value);
 });
 
 root.addEventListener("submit", e => {
