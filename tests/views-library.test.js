@@ -363,10 +363,17 @@ test("renderDoctorForm offers Delete, outside the form, when the model says canD
   assert.ok(html.indexOf("data-delete-doctor") > html.indexOf("</form>"), "it must sit after the form, not inside it");
 });
 
-test("renderDoctorForm offers no Delete at all, and says what is holding the doctor, when canDelete is false", () => {
+// The explanation must name EVERY reason deleteDoctor refuses (server/actions.js, referencesTo),
+// not most of them: a doctor held only by an unnamed reason reads a greyed-out Delete beside two
+// conditions that are not true of them, which is the same "broken app" this text exists to avoid.
+// Asserting each reason separately is what tells the next person who adds a fourth -- the earlier
+// assertion matched only the opening clause and let a third reason be added without a word.
+test("renderDoctorForm offers no Delete at all, and names every reason the doctor is held, when canDelete is false", () => {
   const html = renderDoctorForm({ model: doctorFormModel({ canDelete: false }), error: "", busy: false });
   assert.ok(!html.includes("data-delete-doctor"), html);
   assert.ok(html.includes("can&#39;t be removed while they&#39;re named on a medicine somebody takes"), html);
+  assert.ok(html.includes("they&#39;re on somebody&#39;s care team"), html);
+  assert.ok(html.includes("a change already recorded in somebody&#39;s history names them"), html);
 });
 
 // "Nobody worked it out" is not "the server said no". A model that arrives without canDelete --

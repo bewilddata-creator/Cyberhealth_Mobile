@@ -1418,10 +1418,13 @@ test("a delete the server refuses says why, and leaves the screen where it was",
   await fresh();
   await clickOn({ library: "doctors" });
   await clickOn({ openDoctor: "DOC01" });
-  // DOC01 writes RX01 and is on Dad's care team, so the button is not drawn at all...
+  // DOC01 writes RX01, is on Dad's care team and is named on CH01/CH02, so the button is not
+  // drawn at all and the text in its place names all three reasons rather than some of them.
   render();
   assert.doesNotMatch(root.innerHTML, /data-delete-doctor/);
-  assert.match(root.innerHTML, /can&#39;t be removed while/);
+  assert.match(root.innerHTML, /can&#39;t be removed while they&#39;re named on a medicine somebody takes/);
+  assert.match(root.innerHTML, /they&#39;re on somebody&#39;s care team/);
+  assert.match(root.innerHTML, /a change already recorded in somebody&#39;s history names them/);
   // ...and even reaching the handler another way is refused, said out loud, and changes nothing.
   await clickOn({ deleteDoctor: "DOC01" });
   assert.match(S.toast, /still named on/);

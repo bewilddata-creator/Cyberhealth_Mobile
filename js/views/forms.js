@@ -205,7 +205,11 @@ export function renderDoctorForm({ model, error, busy }) {
       attr: "data-delete-doctor",
       id: m.doctorId || doctor.doctor_id || "",
       label: "Delete this doctor",
-      why: "This doctor can't be removed while they're named on a medicine somebody takes, or they're on somebody's care team.",
+      // All three reasons deleteDoctor refuses (server/actions.js, referencesTo), in the same
+      // order and the same words as the question asked before a delete that IS allowed. A doctor
+      // held only by the third one would otherwise read a greyed-out Delete beside an explanation
+      // naming two things, neither of them true of them -- which reads as a broken app.
+      why: "This doctor can't be removed while they're named on a medicine somebody takes, they're on somebody's care team, or a change already recorded in somebody's history names them.",
     })}`;
 }
 
