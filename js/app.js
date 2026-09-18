@@ -307,8 +307,15 @@ function medicineOptions() {
 // The owner's care team, plus whichever doctor this prescription already names even if they have
 // since left it. A doctor missing from the list would come back from the <select> as "" and
 // silently erase who prescribed it -- the change would save, and look fine, with the doctor gone.
+// Deduped by doctor_id: doctorsModel returns one row per care-team row, so a doctor the owner sees
+// at two hospitals would otherwise be listed twice in "Who prescribed it?" -- the same value both
+// times, so nothing saves wrong, but it reads as a broken screen.
 function doctorOptions(doctorId) {
-  const list = doctorsModel(S.idx, S.owner).map(r => r.doctor).filter(Boolean);
+  const list = [];
+  doctorsModel(S.idx, S.owner).forEach(r => {
+    const d = r.doctor;
+    if (d && !list.some(x => x.doctor_id === d.doctor_id)) list.push(d);
+  });
   if (doctorId && !list.some(d => d.doctor_id === doctorId)) {
     const d = S.idx.doctors.get(doctorId);
     if (d) list.push(d);
@@ -398,13 +405,35 @@ let staleAfterSave = "";
 function announce(message) {
   const err = staleAfterSave;
   staleAfterSave = "";
+  // The reload that follows a write can end the session, in which case loadBoot has already put
+  // the login screen up and cleared the toasts on purpose (whoever logs in next is not who this
+  // message was for). There is no app screen left to say anything on.
+  if (!S.boot) return;
   toast(err ? `${message} The screen couldn't refresh, so it may be out of date — tap Refresh on the More tab. (${err})` : message);
 }
 
-function leaveForm(screen, message) {
+// The form is over: nothing is left half-filled behind a screen that no longer shows it.
+function dropForm() {
   Object.assign(S, { form: null, formStash: null, formError: "", formBusy: false, formDirty: false });
+}
+
+function leaveForm(screen, message) {
+  dropForm();
   go(screen);
   if (message) announce(message);
+}
+
+// After a write, whether there is still a logged-in app to go back to. A reload that fails with
+// AUTH_REQUIRED nulls S.boot and shows the login screen; carrying on from there would set
+// S.screen back to an app screen, and view() renders a bare spinner when S.boot is null -- so the
+// phone would sit on a spinner that never resolves, with no way out but force-quitting a Home
+// Screen app. The write itself already landed, so there is nothing more to do but let the login
+// screen the reload chose be the one he sees.
+function sessionEnded() {
+  if (S.boot) return false;
+  staleAfterSave = "";
+  dropForm();
+  return true;
 }
 
 function openPrescriptionForm() {
@@ -459,6 +488,7 @@ async function runSave(form, send, finish) {
     const result = await send(model);
     staleAfterSave = await loadBoot();
     S.formBusy = false;
+    if (sessionEnded()) return;
     finish(result, model);
   } catch (e) {
     S.formBusy = false; S.formError = e.message; render();
@@ -478,7 +508,13 @@ function saveMedicine(form) {
       const back = { ...S.formStash, medicineId: saved.medicine_id };
       Object.assign(S, { form: back, formStash: null, formError: "", formBusy: false, formDirty: true, formFrom: "meds", screen: "prescriptionForm" });
       render();
-      return announce(`${saved.generic_name} is in the list now, and chosen below.`);
+      // "chosen below" is only true if the reload that would put it in the picker worked. When it
+      // did not, the medicine is saved but the picker still says "Choose one…", and claiming
+      // otherwise would have him looking for something the screen contradicts -- announce() adds
+      // the "tap Refresh" sentence in that case.
+      return announce(staleAfterSave
+        ? `${saved.generic_name} is saved.`
+        : `${saved.generic_name} is in the list now, and chosen below.`);
     }
     leaveForm(S.formFrom === "detail" && S.detail ? "detail" : "meds", editing ? "Saved." : `${saved.generic_name} is in the medicine list.`);
   });
@@ -537,6 +573,7 @@ async function actOnPrescription(action, prescriptionId, message, after) {
   try {
     await call(action, { prescriptionId, reason: "" });
     staleAfterSave = await loadBoot();
+    if (sessionEnded()) return;
     if (after) after();
     announce(message);
   } catch (e) {
@@ -582,45 +619,60 @@ export function splitPhotoTarget(value) {
   return at === -1 ? { medicineId: s, slot: "" } : { medicineId: s.slice(0, at), slot: s.slice(at + 1) };
 }
 
-// The detail screen draws no spinner, and shrinking plus uploading a photo takes seconds on a
-// phone, so the toast is what says something is happening.
-async function uploadPhoto(medicineId, slot) {
-  const file = await pickImage();
-  if (!file) return;
-  if (S.formBusy) return;
-  S.formBusy = true;
+// Its own flag, NOT S.formBusy: that one is the four forms' save button, and an upload still in
+// flight when a form is opened would otherwise disable that form's button and, worse, land its own
+// "Photo saved." on a screen that has nothing to do with photos. The guard comes before the photo
+// picker and before the question, because a double tap is normal on a phone and two pickers (or
+// the same question twice) is the app's fault, not the thumb's.
+let photoBusy = false;
+
+// A success message belongs to the screen that started the upload: shrinking and uploading takes
+// seconds, and the family can be somewhere else by the time it lands. A failure is always said --
+// silence after a photo that did not save would read as success.
+function photoDone(startedOn, message) {
+  if (sessionEnded()) return;
+  if (S.screen === "detail" && S.detail === startedOn) return announce(message);
   staleAfterSave = "";
-  toast("Saving the photo…");
+}
+
+async function uploadPhoto(medicineId, slot) {
+  if (photoBusy) return;
+  photoBusy = true;
+  staleAfterSave = "";
   try {
+    const file = await pickImage();
+    if (!file) return;
+    const startedOn = S.screen === "detail" ? S.detail : null;
+    // The detail screen draws no spinner, so the toast is what says something is happening.
+    toast("Saving the photo…");
     const dataUrl = await shrinkToDataUrl(file);
     const { warnings } = await call("uploadMedicinePhoto", { medicineId, slot, dataUrl });
     staleAfterSave = await loadBoot();
-    announce(warnings && warnings.length ? warnings[0] : "Photo saved.");
+    photoDone(startedOn, warnings && warnings.length ? warnings[0] : "Photo saved.");
   } catch (e) {
     staleAfterSave = "";
     toast(e.message);
   } finally {
-    S.formBusy = false;
-    render();
+    photoBusy = false;
   }
 }
 
 async function removePhoto(medicineId, slot) {
+  if (photoBusy) return;
   const label = photoLabel(slot);
   if (!confirm(`Remove the ${label || "chosen"} photo of ${medicineNameOf(medicineId)}? The medicine itself stays on the list.`)) return;
-  if (S.formBusy) return;
-  S.formBusy = true;
+  photoBusy = true;
   staleAfterSave = "";
+  const startedOn = S.screen === "detail" ? S.detail : null;
   try {
     const { warnings } = await call("removeMedicinePhoto", { medicineId, slot });
     staleAfterSave = await loadBoot();
-    announce(warnings && warnings.length ? warnings[0] : "Photo removed.");
+    photoDone(startedOn, warnings && warnings.length ? warnings[0] : "Photo removed.");
   } catch (e) {
     staleAfterSave = "";
     toast(e.message);
   } finally {
-    S.formBusy = false;
-    render();
+    photoBusy = false;
   }
 }
 
@@ -629,7 +681,10 @@ async function removePhoto(medicineId, slot) {
 // typed: it sits in the top-left corner where a thumb lands by accident, and an unasked-for
 // discard of a half-filled prescription is exactly the silent loss this release exists to remove.
 // An untouched form goes back with no question, because there is nothing to lose.
-function cancelForm(form) {
+// Takes no form: the back arrow is drawn in the top bar, OUTSIDE the <form> (js/views/forms.js
+// topBar), so there is no form element to read from it -- and nothing needs one. Whether there is
+// anything to lose is S.formDirty, and what to go back to is S.formFrom.
+function cancelForm() {
   if (S.formDirty && !confirm("Go back without saving? What you've typed here will be lost.")) return;
   // Backing out of the medicine form that was opened FROM the prescription form drops only the
   // medicine; the half-filled prescription behind it comes back untouched.
@@ -669,7 +724,7 @@ root.addEventListener("click", e => {
   if ("newMedicine" in d) return openNewMedicine(el.closest("form[data-form]"));
   if (d.uploadPhoto) { const t = splitPhotoTarget(d.uploadPhoto); return uploadPhoto(t.medicineId, t.slot); }
   if (d.removePhoto) { const t = splitPhotoTarget(d.removePhoto); return removePhoto(t.medicineId, t.slot); }
-  if ("cancel" in d) return cancelForm(el.closest("form[data-form]"));
+  if ("cancel" in d) return cancelForm();
 });
 
 root.addEventListener("change", e => {

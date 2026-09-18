@@ -87,6 +87,11 @@ globalThis.fetch = async (url, opts) => {
   if (req.action === "bootstrap" && world.breakBootstrap) {
     return { json: async () => ({ ok: false, error: { code: "NETWORK", message: "No internet connection. Check Wi-Fi or mobile data and try again." } }) };
   }
+  // The session ending on the reload that follows a write: the write landed, but there is no
+  // logged-in app left to go back to.
+  if (req.action === "bootstrap" && world.expireSession) {
+    return { json: async () => ({ ok: false, error: { code: "AUTH_REQUIRED", message: "Please log in again." } }) };
+  }
   const reply = handle(req, world.ctx);
   return { json: async () => JSON.parse(JSON.stringify(reply)) };
 };
@@ -110,7 +115,7 @@ function newWorld() {
   };
   const token = loginAs(ctx, "Dad", "dad123");
   store.set("cyberhealth.token", token);
-  world = { ctx, token, sent: [], created, trashed, breakBootstrap: false };
+  world = { ctx, token, sent: [], created, trashed, breakBootstrap: false, expireSession: false };
 }
 
 // A logged-in phone showing Dad's medicines, with nothing recorded from a previous test.
@@ -213,6 +218,25 @@ test("a dose form with Morning and Evening filled and Noon blank sends exactly t
   assert.equal("doctorId" in req, false);
   assert.equal(S.screen, "detail");
   assert.match(S.toast, /new dose is saved/);
+});
+
+test("an amount box holding only spaces counts as blank, never as a zero", async () => {
+  await fresh();
+  await clickOn({ changeDose: "RX01" });
+  const form = makeForm("dose", [
+    field("prescriptionId", "RX01"),
+    field("amountMorning", "1"), field("unitMorning", "tablet"),
+    // type="number" keeps a browser from ever submitting this, so the rule is only enforceable
+    // here -- and the rule matters: a 0 would come back as "The Noon amount must be more than 0."
+    field("amountNoon", "   "), field("unitNoon", "tablet"),
+    field("amountEvening", ""), field("unitEvening", ""),
+    field("amountBedtime", "\t "), field("unitBedtime", "tablet"),
+    field("reason", ""),
+  ]);
+  await submitOf(form);
+  const req = lastSent("changePrescriptionDose");
+  assert.deepEqual(req.doses, [{ timeOfDay: "Morning", amount: 1, unit: "tablet" }]);
+  assert.equal(S.screen, "detail");
 });
 
 test("the four weekday boxes that share a name are read with getAll, so Mon, Wed and Fri all arrive", async () => {
@@ -358,6 +382,81 @@ test("a save that works, followed by a reload that fails, says both things", asy
   assert.equal(S.toast, "The new dose is saved.");
 });
 
+// If the reload after a write ends the session, loadBoot puts the login screen up and clears the
+// toasts. Anything the handler does afterwards -- go("detail"), leaveForm("meds"), a success toast
+// -- puts an app screen name back on S.screen with no boot behind it, and view() then draws a bare
+// spinner: a phone stuck on a spinner that only force-quitting clears, for a save that worked.
+function assertOnLoginScreen() {
+  assert.equal(S.screen, "login", "should be on the login screen, not an app screen with no data");
+  assert.equal(S.boot, null);
+  assert.equal(S.toast, "", "the login screen must not carry a toast meant for the last session");
+  assert.equal(S.form, null);
+  assert.equal(S.formBusy, false);
+  // What the user would actually be looking at.
+  render();
+  assert.match(root.innerHTML, /data-pick/, "the login screen should be on the page");
+  assert.doesNotMatch(root.innerHTML, /class="loading"/, "must not be a spinner with no way out");
+}
+
+test("a form save whose reload ends the session leaves the user on the login screen, not a spinner", async () => {
+  await fresh();
+  await clickOn({ changeDose: "RX01" });
+  world.expireSession = true;
+  await submitOf(makeForm("dose", [field("prescriptionId", "RX01"), ...DOSE_FIELDS({ Morning: "3" })]));
+  // The write itself landed...
+  assert.equal(world.ctx.db.rows("PrescriptionDoses").filter(d => d.prescription_id === "RX01")[0].amount, "3");
+  // ...and the screen is the one the reload chose.
+  assertOnLoginScreen();
+});
+
+test("a stop, a restart and a delete whose reload ends the session do the same", async () => {
+  for (const dataset of [{ stop: "RX01" }, { restart: "RX06" }, { delete: "RX01" }]) {
+    await fresh();
+    world.expireSession = true;
+    S.detail = "RX01";
+    await clickOn(dataset);
+    assertOnLoginScreen();
+    // S.detail is left exactly as it was, because the handler stops before its after() step.
+    // Harmless: detailModel re-checks the id against the next bootstrap and renders "This
+    // medicine isn't available" rather than anything worse.
+    assert.equal(S.detail, "RX01");
+  }
+});
+
+test("a photo action whose reload ends the session does the same", async () => {
+  await fresh();
+  S.detail = "RX01";
+  world.expireSession = true;
+  await clickOn({ removePhoto: "MED01|pill_front" });
+  assert.equal(world.ctx.db.rows("Medicines").find(m => m.medicine_id === "MED01").photo_pill_front, "");
+  assertOnLoginScreen();
+});
+
+test("a mid-flow medicine whose reload fails does not claim it is chosen below", async () => {
+  await fresh();
+  await clickOn({ addPrescription: "" });
+  const half = makeForm("prescription", [
+    field("medicineId", ""), field("frequency", "Daily"), field("mealTiming", "Any time"),
+    ...DOSE_FIELDS({ Morning: "1" }), field("doctorId", ""), field("notes", ""),
+  ]);
+  await clickOn({ newMedicine: "" }, half);
+  world.breakBootstrap = true;
+  await submitOf(makeForm("medicine", [
+    field("generic_name", "Furosemide"), field("brand_name", ""), field("strength", "40 mg"),
+    field("form", "Tablet"), field("purpose", "Fluid"), field("notes", ""),
+  ]));
+  assert.ok(world.ctx.db.rows("Medicines").some(m => m.generic_name === "Furosemide"));
+  assert.equal(S.screen, "prescriptionForm");
+  assert.match(S.toast, /Furosemide is saved\./);
+  assert.match(S.toast, /couldn't refresh/);
+  // The picker cannot be showing it, because the reload that would have put it there failed.
+  assert.doesNotMatch(S.toast, /chosen below/);
+  render();
+  const picker = root.innerHTML.match(/<select id="f-medicine"[\s\S]*?<\/select>/)[0];
+  assert.doesNotMatch(picker, /Furosemide/);
+  assert.match(picker, /Choose one…/);
+});
+
 test("a stop whose reload fails says the medicine stopped and that the screen is stale", async () => {
   await fresh();
   world.breakBootstrap = true;
@@ -432,6 +531,9 @@ test("the photo target splits on the last bar, so an id with a bar in it still w
 
 test("removing a photo asks with the slot and the medicine named, then sends that slot", async () => {
   await fresh();
+  // The photo buttons only ever render on the detail screen, which is what the success message is
+  // keyed to -- an upload that outlives that screen stays quiet rather than talking over another.
+  S.screen = "detail";
   S.detail = "RX01";
   confirmAnswer = false;
   await clickOn({ removePhoto: "MED01|pill_front" });
@@ -492,9 +594,12 @@ test("the back arrow asks before dropping a half-filled form, and goes straight 
   await fresh();
   await clickOn({ changeDose: "RX01" });
   const form = makeForm("dose", [field("prescriptionId", "RX01"), ...DOSE_FIELDS({ Morning: "2" })]);
+  // No form is passed with the cancel clicks on purpose: topBar() draws the back arrow in the top
+  // bar, OUTSIDE the <form>, so closest("form[data-form]") from that button is null on a real
+  // phone. What it goes back to is S.formFrom, and whether it asks is S.formDirty.
 
   // Nothing typed yet: no question, straight back to the medicine.
-  await clickOn({ cancel: "" }, form);
+  await clickOn({ cancel: "" });
   assert.equal(confirms.length, 0);
   assert.equal(S.screen, "detail");
   assert.equal(S.form, null);
@@ -503,14 +608,14 @@ test("the back arrow asks before dropping a half-filled form, and goes straight 
   await clickOn({ changeDose: "RX01" });
   await typeIn(form);
   confirmAnswer = false;
-  await clickOn({ cancel: "" }, form);
+  await clickOn({ cancel: "" });
   assert.equal(confirms.length, 1);
   assert.match(confirms[0], /without saving/);
   assert.equal(S.screen, "doseForm");
   assert.ok(S.form);
 
   confirmAnswer = true;
-  await clickOn({ cancel: "" }, form);
+  await clickOn({ cancel: "" });
   assert.equal(S.screen, "detail");
 });
 
@@ -546,7 +651,7 @@ test("adding a medicine from the prescription form comes back to it, filled in, 
   await clickOn({ newMedicine: "" }, half);
   assert.equal(S.screen, "medicineForm");
   confirmAnswer = true;
-  await clickOn({ cancel: "" }, makeForm("medicine", [field("generic_name", "half typed")]));
+  await clickOn({ cancel: "" });
   assert.equal(S.screen, "prescriptionForm");
   assert.deepEqual(S.form.weekdays, ["Tue", "Sat"]);
 });
