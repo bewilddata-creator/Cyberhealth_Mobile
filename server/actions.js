@@ -549,8 +549,15 @@ Object.assign(ACTIONS, {
       // Same rule as addPrescription: the medicine's form decides the unit, not the phone. A
       // prescription whose stored unit disagrees with its medicine (someone typed "pill" for a
       // Tablet) is corrected here, and the history row says so in words.
+      //
+      // The medicine having been deleted from the library since is named outright, in the same
+      // words addPrescription uses. Without this the derivation finds no form, the unit comes
+      // back blank, and validateDoses says "The Morning row needs a unit" -- which for a tablet
+      // asks her for something the form shows her no box to type into, and never mentions that
+      // the medicine is what went missing.
       const medicine = ctx.db.rows("Medicines").find(m => str(m.medicine_id) === current.prescription.medicineId);
-      const doses = validateDoses(dosesWithMedicineUnit(req.doses, medicine && medicine.form), current.prescription.freq);
+      if (!medicine) throw new AppError("BAD_INPUT", "That medicine isn't in the list. Add it first.");
+      const doses = validateDoses(dosesWithMedicineUnit(req.doses, medicine.form), current.prescription.freq);
       if (!doses.ok) throw new AppError("BAD_INPUT", doses.reason);
       return applyPrescriptionChange(ctx, user, prescriptionId, "Dose changed", () => {
         if (req.doctorId !== undefined) ctx.db.update("Prescriptions", "prescription_id", prescriptionId, { doctor_id: str(req.doctorId) });

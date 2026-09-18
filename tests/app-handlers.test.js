@@ -971,3 +971,55 @@ test("typing an amount rewrites the unit word beside it, and re-renders nothing"
   assert.equal(word.textContent, "tablets", "an empty box reads as the plural");
   assert.equal(S.screen, "doseForm", "still on the form, nothing re-rendered out from under him");
 });
+
+// F2: the picker is read by eye, down a list, looking for the box in her hand. It now labels
+// brand-first, so sorting by generic_name behind the label left it running Norvasc, Glucophage,
+// Cozaar -- unsorted to the only person who uses it.
+
+const pickerLabels = () => formModel().medicines.map(m => {
+  const brand = String(m.brand_name || "").trim();
+  const generic = String(m.generic_name || "").trim();
+  const name = !brand ? generic : (brand.toLowerCase() === generic.toLowerCase() ? brand : `${brand} (${generic})`);
+  return [name, String(m.strength || "").trim()].filter(Boolean).join(" ");
+});
+
+test("the medicine picker is sorted by the name it shows, not the generic behind it", async () => {
+  await fresh();
+  world.ctx.db.update("Medicines", "medicine_id", "MED01", { brand_name: "Norvasc" });    // Amlodipine
+  world.ctx.db.update("Medicines", "medicine_id", "MED02", { brand_name: "Glucophage" }); // Metformin
+  world.ctx.db.update("Medicines", "medicine_id", "MED04", { brand_name: "Calpol" });     // Paracetamol
+  await loadBoot();
+  await clickOn({ addPrescription: "" });
+  assert.deepEqual(pickerLabels(), [
+    "Calpol (Paracetamol) 500 mg",
+    "Epoetin alfa 4,000 IU",
+    "Glucophage (Metformin) 500 mg",
+    "Norvasc (Amlodipine) 5 mg",
+    "Vitamin C 1,000 mg",
+  ], "A to Z by what is on screen");
+});
+
+// Not a raw < : that compares UTF-16 code units, which puts every lower-case name after every
+// upper-case one and every Thai name in code-point rather than dictionary order.
+test("the picker's sort is locale-aware, not a code-unit comparison", async () => {
+  await fresh();
+  world.ctx.db.update("Medicines", "medicine_id", "MED01", { generic_name: "aspirin", brand_name: "" });
+  world.ctx.db.update("Medicines", "medicine_id", "MED02", { generic_name: "Betahistine", brand_name: "" });
+  await loadBoot();
+  await clickOn({ addPrescription: "" });
+  const labels = pickerLabels();
+  assert.ok(labels.indexOf("aspirin 5 mg") < labels.indexOf("Betahistine 500 mg"),
+    `a lower-case a must come before an upper-case B, got ${JSON.stringify(labels)}`);
+  assert.ok("aspirin" > "Betahistine", "and a raw comparison would have got this backwards");
+});
+
+// Two strengths of the same medicine sit together, weakest first -- 5 mg before 10 mg, which a
+// plain string comparison would reverse.
+test("two strengths of one medicine sort together, and by number", async () => {
+  await fresh();
+  world.ctx.db.append("Medicines", { medicine_id: "MED-10", generic_name: "Amlodipine", strength: "10 mg", form: "Tablet" });
+  await loadBoot();
+  await clickOn({ addPrescription: "" });
+  const labels = pickerLabels().filter(l => l.startsWith("Amlodipine"));
+  assert.deepEqual(labels, ["Amlodipine 5 mg", "Amlodipine 10 mg"]);
+});

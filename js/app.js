@@ -305,8 +305,22 @@ function medicineNameOf(medicineId) {
   const name = m ? medicineNameParts(m).name : "";
   return name || "this medicine";
 }
+// The medicine library, in the order the picker actually reads. Sorted by the name SHOWN -- which
+// since this release leads with the brand -- not by generic_name, or the list would run Norvasc,
+// Glucophage, Cozaar and look unsorted to the one person using it. Finding the box by its own name
+// is the whole point; making her scan an unordered list for it gives half of that back.
+//
+// Locale-aware, because these names can be Thai: a raw < compares UTF-16 code units and puts every
+// Thai name in code-point order rather than dictionary order. numeric:true is for the strength, so
+// 5 mg sorts before 10 mg instead of after it.
+function medicineLabelOrder(a, b) {
+  const A = medicineNameParts(a);
+  const B = medicineNameParts(b);
+  const byName = A.name.localeCompare(B.name, undefined, { sensitivity: "base", numeric: true });
+  return byName !== 0 ? byName : A.strength.localeCompare(B.strength, undefined, { sensitivity: "base", numeric: true });
+}
 function medicineOptions() {
-  return [...S.idx.medicines.values()].sort((a, b) => String(a.generic_name).localeCompare(String(b.generic_name)));
+  return [...S.idx.medicines.values()].sort(medicineLabelOrder);
 }
 // The owner's care team, plus whichever doctor this prescription already names even if they have
 // since left it. A doctor missing from the list would come back from the <select> as "" and

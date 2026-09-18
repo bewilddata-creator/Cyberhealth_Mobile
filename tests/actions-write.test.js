@@ -435,3 +435,28 @@ test("a tick still snapshots the unit of the dose it was taken against", () => {
   handle({ action: "changePrescriptionDose", token, prescriptionId: "RX01", doses: [{ timeOfDay: "Morning", amount: 1 }] }, ctx);
   assert.equal(ctx.db.rows("DoseLog").find(l => l.prescription_id === "RX01").amount_taken, "2");
 });
+
+// F1: the medicine deleted from the library since the prescription was written. Without a guard
+// the derivation finds no form, the unit comes back blank, and the family is told "The Morning row
+// needs a unit" -- for a tablet, a box the form does not show, about a problem it does not name.
+test("a dose edit whose medicine has been deleted from the library says so, in the same words as adding one", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Pim", "pim123");
+  ctx.db.remove("Medicines", m => String(m.medicine_id).trim() === "MED01"); // RX01's medicine
+  const r = handle({ action: "changePrescriptionDose", token, prescriptionId: "RX01", doses: [{ timeOfDay: "Morning", amount: 1 }] }, ctx);
+  assert.equal(r.ok, false);
+  assert.equal(r.error.code, "BAD_INPUT");
+  assert.equal(r.error.message, "That medicine isn't in the list. Add it first.");
+  assert.doesNotMatch(r.error.message, /needs a unit/, "never ask for a box the form doesn't show");
+  // And nothing is written: not the doses, not a history row.
+  assert.deepEqual(dosesOf(ctx, "RX01"), ["Morning 2 tablet"], "the dose rows are untouched");
+  assert.equal(ctx.db.rows("PrescriptionChanges").filter(c => c.prescription_id === "RX01").length, 2, "no history row for a refused edit");
+});
+
+test("the same missing medicine is named the same way when adding, so the two paths read alike", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Dad", "dad123");
+  const r = handle({ action: "addPrescription", token, userId: "U01", medicineId: "MED-GONE", frequency: "Daily", doses: [{ timeOfDay: "Morning", amount: 1 }] }, ctx);
+  assert.equal(r.ok, false);
+  assert.equal(r.error.message, "That medicine isn't in the list. Add it first.");
+});
