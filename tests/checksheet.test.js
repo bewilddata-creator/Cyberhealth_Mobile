@@ -7,8 +7,9 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import vm from "node:vm";
-import { fixtureTables } from "./fixtures.js";
+import { fixtureTables, fakeCtx, loginAs } from "./fixtures.js";
 import { fakeSpreadsheetApp } from "./gs-sheet-fake.js";
+import { handle } from "../server/actions.js";
 
 function loadGs() {
   const context = vm.createContext({ console });
@@ -185,4 +186,18 @@ test("checkSheet reports an empty photo_folder_id as needed from release 2", () 
   tables.Settings = tables.Settings.map(r => (r.key === "photo_folder_id" ? { ...r, value: "" } : r));
   const problems = runCheckSheet(tables);
   assert.ok(problems.some(p => p.includes("photo_folder_id") && p.includes("release 2")), problems.join("\n"));
+});
+
+test("checkSheet accepts a Sheet after the app has added a prescription and a medicine through it", () => {
+  const tables = clone(fixtureTables());
+  const ctx = fakeCtx(tables);
+  const token = loginAs(ctx, "Dad", "dad123");
+  const med = handle({ action: "addMedicine", token, fields: { generic_name: "Losartan", strength: "50 mg" } }, ctx);
+  assert.equal(med.ok, true, JSON.stringify(med));
+  const rx = handle({
+    action: "addPrescription", token, userId: "U01", medicineId: med.data.medicine_id,
+    frequency: "Daily", doses: [{ timeOfDay: "Noon", amount: 1, unit: "tablet" }],
+  }, ctx);
+  assert.equal(rx.ok, true, JSON.stringify(rx));
+  assert.deepEqual(runCheckSheet(tables), [], "the app must never write a row its own checker rejects");
 });

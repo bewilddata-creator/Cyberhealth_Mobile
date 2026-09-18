@@ -59,7 +59,14 @@ There are three things you'll end up with:
      per person granting the rest of the family `View` or `Edit` access
      (leave `shared_with_user_id` blank to share with everyone). `section`
      must be exactly `Medicines` or `Care team`; `access` must be exactly
-     `View` or `Edit`.
+     `View` or `Edit`. For example, so a daughter can add and edit her
+     father's medicines from the app (not just see them): a `Sharing` row
+     with `owner_user_id` = his `user_id`, `shared_with_user_id` = her
+     `user_id` (or blank, to give the whole family the same right),
+     `section` = `Medicines`, `access` = `Edit`. This only affects adding,
+     stopping and editing medicines — ticking a dose as taken is always
+     the owner's alone, on every phone, `Edit` share or not (see "Changing
+     a medicine from the app" below).
    - **Medicines**, **Hospitals**, **Doctors** — the shared family
      libraries. Add the ones you actually use.
    - **Prescriptions** and **PrescriptionDoses** — what each person takes
@@ -117,10 +124,10 @@ going to paste in the code from this project's `apps-script/` folder.
    }
    ```
 
-3. **Paste in the eight code files.** In this project's `apps-script/`
-   folder there are eight `.gs` files: `Access.gs`, `Actions.gs`,
+3. **Paste in the eleven code files.** In this project's `apps-script/`
+   folder there are eleven `.gs` files: `Access.gs`, `Actions.gs`,
    `Adapters.gs`, `AuthCore.gs`, `CheckSheet.gs`, `Code.gs`, `Data.gs`,
-   `Schedule.gs`. For each one:
+   `Drive.gs`, `Photos.gs`, `Prescriptions.gs`, `Schedule.gs`. For each one:
    - `Code.gs` already exists — click it, select all, delete, and paste in
      the matching file's contents.
    - For every other name, click the **+** next to "Files" in the sidebar,
@@ -129,20 +136,25 @@ going to paste in the code from this project's `apps-script/` folder.
      contents.
 
    The order you create them in doesn't matter. When you're done, the file
-   list on the left should show exactly those eight names (plus
+   list on the left should show exactly those eleven names (plus
    `appsscript.json`), each holding the same code as the matching file in
    `apps-script/`.
 
-4. **Check the Sheet before trusting it.** Click on the `CheckSheet.gs` file
-   so it's the open file — the function dropdown at the top of the editor
-   (next to "Debug") only lists functions from whichever file is currently
-   open. Choose **`checkSheet`** from that dropdown, then click **Run**
-   (▶).
+4. **Check the Sheet before trusting it — and say yes to the Drive
+   question.** Click on the `CheckSheet.gs` file so it's the open file —
+   the function dropdown at the top of the editor (next to "Debug") only
+   lists functions from whichever file is currently open. Choose
+   **`checkSheet`** from that dropdown, then click **Run** (▶).
    - The first time, Google will ask you to authorize the script. Click
      **Review permissions**, choose your Google account, and if you see a
      screen saying "Google hasn't verified this app," click **Advanced**,
      then **Go to CyberHealth (unsafe)** — this is normal for a script only
-     you and your family run — and **Allow**.
+     you and your family run — and **Allow**. This is also the step that
+     grants the app access to a folder in your Google Drive, for medicine
+     and doctor photos — say yes here, in the editor, even if you don't
+     plan to add a photo right away. If you skip this and only authorize it
+     later, from a deployment, the very first photo anyone tries to add
+     will fail.
    - Once it runs, open **Execution log** at the bottom (it usually opens
      automatically). `checkSheet` never changes your Sheet — it only reads
      it and reports problems.
@@ -171,10 +183,20 @@ going to paste in the code from this project's `apps-script/` folder.
 
 **When you edit the code later** (a new release of this project, or a fix
 you made yourself): don't create a new deployment — that would change the
-address and break every phone. Instead go **Deploy → Manage deployments**,
-click the pencil (**Edit**) on the existing deployment, change **Version**
-to **New version**, and click **Deploy**. The `/exec` address stays exactly
-the same.
+address and break every phone. Instead, in this order:
+
+1. Paste in every file under `apps-script/` again (all eleven `.gs` files
+   plus `appsscript.json`), overwriting what's there, so the editor matches
+   the new release exactly.
+2. Open `CheckSheet.gs`, choose **`checkSheet`** from the function dropdown,
+   and click **Run** — and if Google asks you to authorize the script
+   again (this can happen after new code is added, even if you authorized
+   it before), accept it, same as Part 2 step 4. Do this **before** the
+   next step: a deployment made before this authorization is accepted will
+   fail the first time anyone tries to add a photo.
+3. Only then go **Deploy → Manage deployments**, click the pencil (**Edit**)
+   on the existing deployment, change **Version** to **New version**, and
+   click **Deploy**. The `/exec` address stays exactly the same.
 
 ## Part 4 — Build the private link
 
@@ -260,6 +282,44 @@ hospital numbers or anything else in the app. This is exactly why Part 4
 says to treat the link like a password: it's what makes the emergency card
 reachable without anyone signing in.
 
+## Changing a medicine from the app
+
+If someone has shared editing rights with you (the `Sharing` row described
+in Part 1), you can add, change and stop medicines right from the app — no
+need to open the Sheet.
+
+Open the **Medicines** tab. If you look after more than one person's
+medicines, switch between them at the top of that tab. Tap a medicine in
+the list to open its own page. From there:
+
+- **Add a medicine to this list** (button at the top of the Medicines tab)
+  — starts a new prescription for whoever's list you're looking at.
+- **Change how much to take** and **Change when to take it** (on a
+  medicine's own page) — change the dose amount or the schedule.
+- **Stop taking this** — asks you to confirm first. It moves the medicine
+  to the "Stopped" list further down the Medicines tab; everything already
+  ticked off for it is kept exactly as it was. A stopped medicine can be
+  brought back later with **Start taking this again**.
+- **Edit details** — changes the medicine itself: its name, strength,
+  purpose and notes. The medicine library is shared by the whole family,
+  so this changes it for everyone who takes it, not only for the person
+  whose page you're on.
+- **Delete — this was added by mistake** — only shows up while no dose has
+  ever been recorded against this prescription (ticked as taken, or
+  skipped). The moment even one dose exists, this button disappears and
+  **Stop taking this** becomes the only way to remove it from the current
+  list — so the record of what was actually taken never loses a row.
+
+Two things are deliberate and worth knowing, so they don't look like bugs:
+
+- **A dose already ticked never changes**, even if the amount or schedule
+  is changed later the same day. A change like this only takes effect from
+  the next dose that hasn't been ticked yet.
+- **Ticking a dose as taken is always the owner's alone.** Someone you've
+  shared `Edit` access with can change what a medicine is, how much of it
+  to take, or when — but only the person themselves, on their own phone,
+  can tick a dose off as taken.
+
 ---
 
 ## Develop
@@ -269,12 +329,14 @@ For whoever maintains the code (not the family admin):
 - `npm test` — runs all tests (`tests/*.test.js`). Everything should stay
   green before you commit.
 - `npm run sync-gs` — after editing any of `js/schedule.js`, `js/access.js`,
-  `js/authcore.js` or `server/actions.js`, run this to regenerate the
-  matching files in `apps-script/` (`Schedule.gs`, `Access.gs`,
-  `AuthCore.gs`, `Actions.gs`). Those four `.gs` files are generated —
-  don't hand-edit them, edit the source `.js` file and re-run the script.
-  The other four Apps Script files (`Adapters.gs`, `CheckSheet.gs`,
-  `Code.gs`, `Data.gs`) are Apps Script-only and are edited directly.
+  `js/authcore.js`, `server/prescriptions.js`, `server/actions.js` or
+  `server/photos.js`, run this to regenerate the matching files in
+  `apps-script/` (`Schedule.gs`, `Access.gs`, `AuthCore.gs`,
+  `Prescriptions.gs`, `Actions.gs`, `Photos.gs`, in that order). Those six
+  `.gs` files are generated — don't hand-edit them, edit the source `.js`
+  file and re-run the script. The other five Apps Script files
+  (`Adapters.gs`, `Code.gs`, `Data.gs`, `CheckSheet.gs`, `Drive.gs`) are
+  Apps Script-only and are edited directly.
 - `npm run serve` — serves the app locally at `http://localhost:8080` with
   Python's built-in server. To try it against sample data instead of a
   real Sheet, temporarily change `js/config.js` to
