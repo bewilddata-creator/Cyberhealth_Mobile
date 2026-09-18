@@ -52,12 +52,12 @@ const WRITE_ACTIONS = [
   ["removeMedicinePhoto", t => ({ action: "removeMedicinePhoto", token: t, medicineId: "MED01", slot: "pill_front" })],
   ["addHospital", t => ({ action: "addHospital", token: t, fields: { name: "Sunrise Clinic" } })],
   ["updateHospital", t => ({ action: "updateHospital", token: t, hospitalId: "HOS01", fields: { phone: "02-555-0000" } })],
-  // Both fixture hospitals (HOS01, HOS02) are referenced elsewhere, so a fresh, unreferenced one
-  // is added first -- that add is what "before" is measured against, since it runs inside build().
-  ["deleteHospital", (t, ctx) => {
-    const added = handle({ action: "addHospital", token: t, fields: { name: "Temp Clinic" } }, ctx);
-    return { action: "deleteHospital", token: t, hospitalId: added.data.hospital_id };
-  }],
+  // Both fixture hospitals (HOS01, HOS02) are referenced elsewhere, so deleteHospital needs a
+  // fresh, unreferenced one to act on. That add is SETUP, not the action under test: it must run
+  // (and take its own lock) before `before` is captured below, via the optional third element,
+  // never inside `build` -- see the loop's comment for why the order is load-bearing.
+  ["deleteHospital", (t, hospitalId) => ({ action: "deleteHospital", token: t, hospitalId }),
+    (ctx, t) => handle({ action: "addHospital", token: t, fields: { name: "Temp Clinic" } }, ctx).data.hospital_id],
 ];
 
 // Actions that only read. A lock here would serialize every phone's refresh behind every write
@@ -70,11 +70,17 @@ const READ_ACTIONS = [
   ["bootstrap", t => ({ action: "bootstrap", token: t })],
 ];
 
-for (const [name, build] of WRITE_ACTIONS) {
+for (const [name, build, setup] of WRITE_ACTIONS) {
   test(`${name} takes the script lock`, () => {
     const { ctx, token } = world();
+    // Setup (an entry's optional third element) runs and fully commits BEFORE `before` is
+    // captured, precisely so its own lock is never mistaken for the lock of the action under
+    // test. `before` must be the very last thing captured ahead of build()/handle() -- move
+    // setup below this line and the assertion below passes even if the action takes no lock at
+    // all, because setup's lock already put locksTaken() above `before`.
+    const setupResult = setup ? setup(ctx, token) : undefined;
     const before = ctx.locksTaken();
-    const r = handle(build(token, ctx), ctx);
+    const r = handle(build(token, setupResult), ctx);
     assert.equal(r.ok, true, `${name} should have succeeded: ${JSON.stringify(r)}`);
     assert.ok(
       ctx.locksTaken() > before,
