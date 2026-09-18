@@ -1,6 +1,6 @@
 // Entry point: registers every screen (Today is already on SCREENS from js/app.js; Task 8 adds
 // the rest via Object.assign(SCREENS, {...}) here), then starts the app.
-import { start, S, ctx, now, SCREENS } from "./app.js";
+import { start, S, ctx, now, SCREENS, formModel } from "./app.js";
 import { adoptApiUrlFromLocation } from "./api.js";
 import { bangkokToday } from "./schedule.js";
 import { medsModel, detailModel, doctorsModel, emergencyModel, canEditOwner } from "./viewmodel.js";
@@ -9,6 +9,7 @@ import { renderDetail } from "./views/detail.js";
 import { renderDoctors } from "./views/doctors.js";
 import { renderEmergency, renderEmergencyEdit } from "./views/emergency.js";
 import { renderMore } from "./views/more.js";
+import { renderMedicineForm, renderPrescriptionForm, renderDoseForm, renderScheduleForm } from "./views/forms.js";
 
 Object.assign(SCREENS, {
   meds: () => ({ tab: "meds", body: renderMeds({ model: medsModel(S.idx, S.owner), ctx: ctx(), canEdit: canEditOwner(S.idx, S.owner) }) }),
@@ -25,6 +26,13 @@ Object.assign(SCREENS, {
     return { tab: "sos", body: renderEmergencyEdit({ card, error: S.editError, busy: S.editBusy }) };
   },
   more: () => ({ tab: "more", body: renderMore({ me: S.boot.me, warnings: S.boot.warnings }) }),
+  // The four editing forms. Each reads its model from formModel(), which is S.form (what has
+  // been picked so far) plus the lists rebuilt from the freshest bootstrap -- so the medicine
+  // just added is in the picker, and a re-render never un-picks anything.
+  medicineForm: () => ({ tab: "meds", body: renderMedicineForm({ medicine: formModel().medicine, error: S.formError, busy: S.formBusy }) }),
+  prescriptionForm: () => ({ tab: "meds", body: renderPrescriptionForm({ model: formModel(), error: S.formError, busy: S.formBusy }) }),
+  doseForm: () => ({ tab: "meds", body: renderDoseForm({ model: formModel(), error: S.formError, busy: S.formBusy }) }),
+  scheduleForm: () => ({ tab: "meds", body: renderScheduleForm({ model: formModel(), error: S.formError, busy: S.formBusy }) }),
 });
 
 // https-only: localhost/http development never registers the worker, so it never caches a stale
