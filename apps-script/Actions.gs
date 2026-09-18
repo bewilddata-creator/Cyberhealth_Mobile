@@ -549,12 +549,15 @@ Object.assign(ACTIONS, {
       if (!doses.ok) throw new AppError("BAD_INPUT", doses.reason);
       return applyPrescriptionChange(ctx, user, prescriptionId, "Schedule changed", () => {
         const patch = Object.assign({}, schedule.fields);
-        // validateScheduleFields defaults meal_timing to "Any time" when the caller omits
-        // mealTiming, which is right for a fresh prescription but wrong for a schedule-only
-        // edit: without this guard, changing a Daily prescription to Weekdays would silently
-        // erase an existing "After meal" instruction. Leave the column untouched unless the
-        // caller actually sent a mealTiming.
-        if (req.mealTiming === undefined) delete patch.meal_timing;
+        // validateScheduleFields defaults meal_timing to "Any time" when mealTiming is missing
+        // OR blank, which is right for a fresh prescription (addPrescription) but wrong for a
+        // schedule-only edit: without this guard, changing a Daily prescription to Weekdays
+        // would silently erase an existing "After meal" instruction. An unselected <select> on
+        // the phone submits "" just like a missing key, so both must be treated the same way:
+        // leave the column untouched unless the caller actually sent a non-blank mealTiming.
+        // Sending "Any time" explicitly still applies it -- that is the only way to clear a
+        // meal timing back to "Any time" once one is set.
+        if (str(req.mealTiming) === "") delete patch.meal_timing;
         if (req.doctorId !== undefined) patch.doctor_id = str(req.doctorId);
         ctx.db.update("Prescriptions", "prescription_id", prescriptionId, patch);
       }, { reason: req.reason });

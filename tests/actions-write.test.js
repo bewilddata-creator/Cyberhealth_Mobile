@@ -189,13 +189,27 @@ test("changePrescriptionSchedule leaves meal_timing untouched when the caller do
   assert.equal(rx.meal_timing, "After meal", "a schedule-only edit must not silently erase the meal timing");
 });
 
-test("changePrescriptionSchedule does change meal_timing when the caller sends one", () => {
+test("changePrescriptionSchedule leaves meal_timing untouched when mealTiming is blank", () => {
   const ctx = fakeCtx();
   const token = loginAs(ctx, "Dad", "dad123");
-  const r = handle({ action: "changePrescriptionSchedule", token, prescriptionId: "RX01", frequency: "Daily", mealTiming: "Before meal" }, ctx);
+  // An unselected <select> on the phone submits "" -- a form's first version could easily send
+  // this instead of omitting the key entirely. RX01 is "After meal" in the fixture.
+  const r = handle({ action: "changePrescriptionSchedule", token, prescriptionId: "RX01", frequency: "Weekdays", weekdays: ["Mon", "Thu"], mealTiming: "" }, ctx);
   assert.equal(r.ok, true, JSON.stringify(r));
   const rx = ctx.db.rows("Prescriptions").find(x => x.prescription_id === "RX01");
-  assert.equal(rx.meal_timing, "Before meal");
+  assert.equal(rx.meal_timing, "After meal", "a blank mealTiming must not wipe the existing value either");
+});
+
+test("changePrescriptionSchedule does change meal_timing when the caller explicitly sends one, including clearing it to Any time", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Dad", "dad123");
+  // RX01 starts "After meal". Sending "Any time" explicitly is the only way to clear a meal
+  // timing back to Any time -- this must still work, so the blank/absent guard above cannot be
+  // written as "meal_timing defaults to Any time so skip it", only as "blank means absent".
+  const r = handle({ action: "changePrescriptionSchedule", token, prescriptionId: "RX01", frequency: "Daily", mealTiming: "Any time" }, ctx);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  const rx = ctx.db.rows("Prescriptions").find(x => x.prescription_id === "RX01");
+  assert.equal(rx.meal_timing, "Any time");
 });
 
 test("switching to Every N days and back to Daily clears count_from, leaving no stale field", () => {
