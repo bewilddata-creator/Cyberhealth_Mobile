@@ -321,7 +321,9 @@ test("updateMedicine changes the shared library row for everyone", () => {
   assert.equal(ctx.db.rows("Medicines").find(m => m.medicine_id === "MED01").generic_name, "Amlodipine besylate");
 });
 
-test("any logged-in user may edit the shared library, with no sharing row at all", () => {
+// U03 ("Top") does have a Sharing row in the fixture -- SH03, View on U02's Medicines -- but it
+// is beside the point: the library is shared by everyone, so editing it turns on no grant at all.
+test("editing the shared library does not depend on any sharing grant", () => {
   const ctx = fakeCtx();
   // Top has no password in the fixture (only a reset code), so set one first -- same pattern as
   // the "viewer with only View access" test above.

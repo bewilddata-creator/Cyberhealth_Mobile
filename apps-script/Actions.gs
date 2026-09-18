@@ -665,7 +665,13 @@ Object.assign(ACTIONS, {
     const created = ctx.drive.put(photoFolderName(medicine), photoFileName(slot, parsed.mimeType), parsed.base64, parsed.mimeType);
     const column = photoColumn(slot);
     const previous = ctx.lock(() => {
-      const before = str((ctx.db.rows("Medicines").find(m => str(m.medicine_id) === medicineId) || {})[column]);
+      // Re-checked INSIDE the lock, the same way removeMedicinePhoto does: the check above ran
+      // before the upload, and someone can delete the medicine while the photo is on its way to
+      // Drive. Without this, ctx.db.update would quietly write nothing, return false nobody
+      // reads, and the phone would be told the photo was saved when no row holds it.
+      const row = ctx.db.rows("Medicines").find(m => str(m.medicine_id) === medicineId);
+      if (!row) throw new AppError("BAD_INPUT", "That medicine isn't in the list any more. Refresh and try again.");
+      const before = str(row[column]);
       const patch = { updated_at: bangkokStamp(ctx.nowMs()), updated_by: user.user_id };
       patch[column] = created.url;
       ctx.db.update("Medicines", "medicine_id", medicineId, patch);

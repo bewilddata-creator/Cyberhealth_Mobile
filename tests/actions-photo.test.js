@@ -86,6 +86,24 @@ test("removeMedicinePhoto clears the column and trashes the file", () => {
   assert.deepEqual(drive.trashed, [up.data.url]);
 });
 
+test("a medicine deleted while the photo was uploading fails the save instead of reporting success", () => {
+  const ctx = fakeCtx();
+  const drive = withDrive(ctx);
+  const token = loginAs(ctx, "Pim", "pim123");
+  // The row is checked before the upload and gone by the time the lock is taken -- exactly the
+  // race the in-lock re-check exists for.
+  const put = ctx.drive.put;
+  ctx.drive.put = (...args) => {
+    ctx.db.remove("Medicines", m => m.medicine_id === "MED01");
+    return put(...args);
+  };
+  const r = handle({ action: "uploadMedicinePhoto", token, medicineId: "MED01", slot: "box", dataUrl: JPEG }, ctx);
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.equal(r.error.code, "BAD_INPUT");
+  assert.match(r.error.message, /isn't in the list any more/);
+  assert.equal(drive.trashed.length, 0, "nothing of anyone else's is trashed on the way out");
+});
+
 test("uploading with no photo folder configured says so in plain words", () => {
   const ctx = fakeCtx();
   withDrive(ctx);
