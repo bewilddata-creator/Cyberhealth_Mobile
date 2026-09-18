@@ -37,9 +37,11 @@ There are three things you'll end up with:
    sample data so you can see the shape of a real row. Delete every grey
    example row once you understand it (right-click the row number → Delete
    row). Two exceptions: the **Settings** tab's `photo_folder_id` row is
-   real, not an example — leave it as is; it's the Drive folder the app
-   stores medicine and doctor photos in, and the value is already correct.
-   And **DoseLog** has no example rows at all — it starts empty and fills
+   real, not an example — leave the row there, but **clear whatever is in
+   its `value` box** so it's empty. That's where the app writes down which
+   Drive folder it keeps medicine photos in, and the app fills it in itself
+   in Part 2 step 5. You don't make a folder and you don't paste an ID
+   anywhere. And **DoseLog** has no example rows at all — it starts empty and fills
    in automatically as doses are ticked in the app, so there's nothing to
    delete there.
 7. Fill in your family's real data, tab by tab. A few things matter more
@@ -114,7 +116,7 @@ going to paste in the code from this project's `apps-script/` folder.
      "runtimeVersion": "V8",
      "oauthScopes": [
        "https://www.googleapis.com/auth/spreadsheets.currentonly",
-       "https://www.googleapis.com/auth/drive"
+       "https://www.googleapis.com/auth/drive.file"
      ],
      "webapp": {
        "executeAs": "USER_DEPLOYING",
@@ -130,16 +132,18 @@ going to paste in the code from this project's `apps-script/` folder.
    - **`spreadsheets.currentonly`** — "See, edit, create, and delete only
      the specific Google Sheets file you use this app with." **This one
      Sheet only.** Not your other spreadsheets.
-   - **`drive`** — "See, edit, create, and delete all of your Google Drive
-     files." This is for the medicine and pill photos. The app opens the
-     one photo folder whose ID you put in the `Settings` tab, makes a
-     subfolder per medicine, and puts the photos there. **Google has no
-     narrower permission that can open a folder you made by hand**, so this
-     is the smallest option that works — the app itself touches nothing
-     else in your Drive, but the permission you are granting is wider than
-     what it uses. If you would rather not grant it, you can skip photos:
-     everything else in the app works without it, and only the photo
-     buttons will fail.
+   - **`drive.file`** — "See, edit, create, and delete only the specific
+     Google Drive files you use with this app." This is for the medicine
+     and pill photos. **The only things in your Drive this app can ever
+     see or change are the ones it made itself**: the photo folder it
+     creates in step 5, the per-medicine subfolders inside it, and the
+     photo files. Every other file and folder in your Drive is invisible
+     to it — not hidden by good manners, but genuinely out of reach,
+     because Google will refuse. That is why the app makes its own folder
+     instead of being handed the ID of one you made: a folder you made by
+     hand is one of the things it cannot open. If you would rather not
+     grant even this, you can skip photos: everything else in the app
+     works without it, and only the photo buttons will fail.
 
    Because these are written down here, the script asks for exactly this
    and nothing more — a later release that needs something new has to say
@@ -171,19 +175,37 @@ going to paste in the code from this project's `apps-script/` folder.
      screen saying "Google hasn't verified this app," click **Advanced**,
      then **Go to CyberHealth (unsafe)** — this is normal for a script only
      you and your family run — and **Allow**. The screen will list the two
-     permissions from step 2: the one Sheets file, and Google Drive. Say
-     yes here, in the editor, even if you don't plan to add a photo right
-     away. If you skip this and only authorize it later, from a deployment,
-     the very first photo anyone tries to add will fail.
+     permissions from step 2: the one Sheets file, and the Drive files this
+     app creates. Say yes here, in the editor, even if you don't plan to add
+     a photo right away. If you skip this and only authorize it later, from
+     a deployment, the very first photo anyone tries to add will fail.
    - Once it runs, open **Execution log** at the bottom (it usually opens
      automatically). `checkSheet` never changes your Sheet — it only reads
      it and reports problems.
-   - If it prints `The Sheet looks good.`, you're ready for Part 3.
+   - If it prints `The Sheet looks good.`, you're ready for step 5.
    - If it lists problems (missing columns, a missing `Primary` user, an
      `_id` that points at nothing, two people with the same name, a
-     duplicate active prescription, an empty `photo_folder_id`, and so on),
-     fix each one in the Sheet and run `checkSheet` again. It's safe to run
-     as many times as you like.
+     duplicate active prescription, a `photo_folder_id` the app can't open,
+     and so on), fix each one in the Sheet and run `checkSheet` again. It's
+     safe to run as many times as you like.
+
+5. **Make the folder for photos.** Click on the `Drive.gs` file so it's the
+   open file, choose **`setUpPhotoFolder`** from the function dropdown, and
+   click **Run** (▶). Open **Execution log** at the bottom to read what it
+   says.
+   - It creates a folder called **CyberHealth Photos** at the top level of
+     your Google Drive, and writes down where it is in the `Settings` tab
+     for you. There is nothing to copy and nothing to paste.
+   - The log prints a link to the folder. **You can drag that folder
+     anywhere you like in Drive afterwards** — tuck it inside another
+     folder, rename it, whatever suits you. The app finds it by its ID, not
+     by where it sits, so moving it won't break anything. Just don't delete
+     it, and don't empty the `photo_folder_id` box.
+   - Running it a second time is harmless: it checks the folder is still
+     there and says there was nothing to do.
+   - If it tells you the `photo_folder_id` box already holds an ID it can't
+     open, that's a folder made by hand — see **Moving an older setup to
+     the narrower Drive permission** at the end of Part 3.
 
 ## Part 3 — Deploy the web app
 
@@ -234,7 +256,7 @@ Then, in this order:
    the new release exactly. Three of the eleven are **new in release 2a**
    and won't exist in your project yet — create them with the **+** next to
    "Files" the way Part 2 step 3 describes:
-   - `Drive.gs` — puts the photos in your Drive folder
+   - `Drive.gs` — makes the app's photo folder and puts the photos in it
    - `Photos.gs` — checks a photo before it is uploaded
    - `Prescriptions.gs` — checks a dose or schedule before it is saved
 
@@ -248,7 +270,9 @@ Then, in this order:
    explains exactly what it covers), and Google asks again whenever the
    permissions change. Do this **before** the next step: a deployment made
    before this authorization is accepted will fail the first time anyone
-   tries to add a photo.
+   tries to add a photo. If you're coming from a release before this one,
+   read **Moving an older setup to the narrower Drive permission** below
+   first — there's a box in the Sheet to empty before you run anything.
 4. Only then go **Deploy → Manage deployments**, click the pencil (**Edit**)
    on the existing deployment, change **Version** to **New version**, and
    click **Deploy**. The `/exec` address stays exactly the same.
@@ -258,6 +282,47 @@ Then, in this order:
 Pasting code into the editor is safe on its own: a deployment is frozen at
 the version it was made from, so the family keeps using the old code until
 step 4. Step 4 is the moment the change actually reaches the phones.
+
+### Moving an older setup to the narrower Drive permission
+
+**Do this once, if you set your Sheet up before this release.** Earlier
+versions asked you to make a photo folder yourself and paste its ID into
+the `Settings` tab, and they asked Google for permission to reach *all* of
+your Drive, because that was the only permission that could open a folder
+made by hand. This release asks for a much smaller permission — only the
+files the app itself creates — so the app now makes its own folder, and the
+ID you pasted in is one it can no longer open.
+
+Nothing breaks while you do this: the app keeps working, and photo uploads
+refuse with a message saying exactly this, rather than quietly making a
+second folder. Do it at a quiet time of day all the same.
+
+1. **Empty the old ID.** Open the Sheet, go to the **Settings** tab, find
+   the `photo_folder_id` row, and delete whatever is in its `value` box.
+   Leave the row itself in place. (Nobody but you can do this step — the
+   app deliberately won't clear it for you, so there's no chance of ending
+   up with two folders and no idea which one your photos are in.)
+2. **Paste in the changed files**, the way step 2 above describes:
+   `appsscript.json`, `Drive.gs`, `CheckSheet.gs`, `Code.gs` and
+   `Actions.gs`. No new files this time.
+3. **Run `setUpPhotoFolder`** — Part 2 step 5. **Google will ask your
+   permission again**, because the permissions changed. Read the screen: it
+   should now say Google Drive files *you use with this app*, not all of
+   them. Accept it. The log will tell you where your new **CyberHealth
+   Photos** folder is.
+4. **Move any old photos yourself.** If your old hand-made folder has
+   photos in it, drag them into the new folder. The app can't reach the old
+   folder any more, so it can't do this for you. (Photos already showing in
+   the app keep showing: the links in the Sheet still work — the app simply
+   can't change or delete those files from now on.)
+5. **Deploy a new version** — steps 4 and 5 above. Until you do, the family
+   is still on the old code and the old permission.
+6. **Optional, once everything works: take the old permission away.** Go to
+   [myaccount.google.com/permissions](https://myaccount.google.com/permissions),
+   find **CyberHealth**, and remove its access. The next time you run
+   anything in the editor, Google will ask again — and will ask only for
+   the two narrow permissions. Do this *after* step 5 and after you've
+   added one photo successfully, not before.
 
 ### If a release goes wrong — rolling back
 
