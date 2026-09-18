@@ -3,7 +3,18 @@ import { I } from "../icons.js";
 import { medicineNameParts } from "../schedule.js";
 import { driveImageUrl } from "../viewmodel.js";
 
-export const SLOT_COLORS = { Morning: ["var(--yellow)", "var(--yellow-2)"], Noon: ["var(--olive)", "var(--olive-2)"], Evening: ["var(--pink)", "var(--pink-2)"], Bedtime: ["var(--blue)", "var(--blue-2)"] };
+// Which group a name in "Who prescribed it?" belongs to. The list is built in js/app.js and drawn
+// in js/views/forms.js, and both ends have to agree -- a bare string that drifted at one end would
+// not throw, it would quietly drop a doctor out of both headings, which is the exact kind of
+// silent wrong that this picker cannot afford.
+//   CARE    -- on this person's own care team; the common case, listed first
+//   LIBRARY -- everyone else in the family's shared doctor list
+//   GONE    -- named on the prescription, but no longer in the Doctors list at all; in neither
+//              group, and drawn on its own so the id the prescription holds still has an <option>
+//              to come back as (without it a save silently erases who prescribed the medicine)
+export const DOCTOR_GROUP = { CARE: "care", LIBRARY: "library", GONE: "gone" };
+
+export const SLOT_COLORS ={ Morning: ["var(--yellow)", "var(--yellow-2)"], Noon: ["var(--olive)", "var(--olive-2)"], Evening: ["var(--pink)", "var(--pink-2)"], Bedtime: ["var(--blue)", "var(--blue-2)"] };
 export const AVATAR_COLORS = ["var(--yellow)", "var(--pink)", "var(--blue)", "var(--olive)"];
 
 export function avatarColor(people, userId) {

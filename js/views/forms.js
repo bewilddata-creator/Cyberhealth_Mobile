@@ -9,7 +9,7 @@
 import { esc } from "../html.js";
 import { I } from "../icons.js";
 import { TIMES_OF_DAY, FREQ, WEEKDAYS, MEDICINE_FORMS, unitForMedicineForm, pluralUnit, medicineNameParts } from "../schedule.js";
-import { deleteBlock } from "./common.js";
+import { deleteBlock, DOCTOR_GROUP } from "./common.js";
 
 // The exact strings the Sheet and server accept, paired with what the family reads.
 const FREQ_LABELS = [
@@ -295,12 +295,41 @@ function mealRow(model) {
       `<option value="${value}" ${value === chosen ? "selected" : ""}>${esc(label)}</option>`).join("")}</select></div>`;
 }
 
+// The picker lists this person's own doctors first and the rest of the family's shared list after,
+// each A to Z (js/app.js doctorOptions). Drawn flat, that reads as one alphabetical list that
+// restarts halfway down -- which looks like a broken screen, and the one job this control has is
+// "did I pick the right doctor". So each group gets a heading of its own.
+//
+// Short on purpose: these are <optgroup> labels, drawn by the phone in a narrow native picker, and
+// a label that runs off the end helps nobody. The first carries a display name typed into the
+// Sheet, so esc() goes on it like everything else.
+const DOCTOR_GROUP_LABELS = [
+  [DOCTOR_GROUP.CARE, m => (m.ownerName ? `${m.ownerName}'s own doctors` : "Their own doctors")],
+  [DOCTOR_GROUP.LIBRARY, () => "The family's other doctors"],
+];
+
+function doctorOption(d, model) {
+  return `<option value="${val(d.doctor_id)}" ${d.doctor_id === model.doctorId ? "selected" : ""}>${esc(d.name)}</option>`;
+}
+
 function doctorRow(model) {
   const doctors = model.doctors || [];
+  const grouped = DOCTOR_GROUP_LABELS.map(([group, label]) => {
+    const inGroup = doctors.filter(d => d.group === group);
+    return inGroup.length
+      ? `<optgroup label="${esc(label(model))}">${inGroup.map(d => doctorOption(d, model)).join("")}</optgroup>`
+      : "";
+  }).join("");
+  // Anyone the two groups did not claim: the doctor whose Doctors row has been deleted but whom
+  // the prescription still names, and anything a caller handed over with no group at all. They are
+  // drawn on their own rather than dropped -- a doctor with no <option> comes back from the
+  // <select> as "" and silently erases who prescribed the medicine.
+  const ungrouped = doctors
+    .filter(d => !DOCTOR_GROUP_LABELS.some(([group]) => d.group === group))
+    .map(d => doctorOption(d, model)).join("");
   return `<div class="form-row"><label for="f-doctor">Who prescribed it?</label>
     <select id="f-doctor" name="doctorId">
-      <option value="">Not recorded</option>${doctors.map(d =>
-        `<option value="${val(d.doctor_id)}" ${d.doctor_id === model.doctorId ? "selected" : ""}>${esc(d.name)}</option>`).join("")}
+      <option value="">Not recorded</option>${grouped}${ungrouped}
     </select></div>`;
 }
 

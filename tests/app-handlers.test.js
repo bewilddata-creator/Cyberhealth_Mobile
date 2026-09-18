@@ -1617,3 +1617,73 @@ test("every doctor the picker offers is one bootstrap already sent this phone", 
   });
   assert.equal(formModel().doctors.length, S.boot.doctors.length, "and every doctor it holds, no more and no fewer");
 });
+
+// ---- Fix round 2: the two groups are drawn with headings of their own ----
+//
+// Ordered but unlabelled, the picker read as one alphabetical list that restarts halfway down --
+// which looks like a broken screen, and the one job this control has is "did I pick the right
+// doctor". Each group now carries an <optgroup> heading.
+//
+// Reads the rendered <select> back into groups, so these tests pin what is actually on the phone
+// rather than what the model happened to hold. Names come back HTML-escaped, exactly as the
+// browser receives them.
+function readPicker() {
+  const sel = root.innerHTML.match(/<select id="f-doctor"[\s\S]*?<\/select>/)[0];
+  const groups = [];
+  const outside = [];
+  let current = null;
+  const token = /<optgroup label="([^"]*)">|<\/optgroup>|<option value="([^"]*)"[^>]*>([^<]*)<\/option>/g;
+  let m;
+  while ((m = token.exec(sel))) {
+    if (m[0].startsWith("<optgroup")) { current = { label: m[1], names: [] }; groups.push(current); continue; }
+    if (m[0] === "</optgroup>") { current = null; continue; }
+    (current ? current.names : outside).push(m[3]);
+  }
+  return { sel, groups, outside };
+}
+
+test("the prescriber picker draws two labelled groups, with every doctor under the right heading", async () => {
+  await withLibraryDoctors();
+  render();
+  const { sel, groups, outside } = readPicker();
+
+  assert.equal(groups.length, 2, "flattening the two groups back into one list must fail this");
+  // The owner's display name is typed into the Sheet, so it arrives escaped.
+  assert.equal(groups[0].label, "Dad&#39;s own doctors");
+  assert.deepEqual(groups[0].names, ["Dr. Anan S.", "Dr. Somchai K."], "the care team, A to Z");
+  assert.equal(groups[1].label, "The family&#39;s other doctors");
+  assert.deepEqual(groups[1].names, ["Dr. Aaa Library", "Dr. Bbb Library"], "the rest of the shared list, A to Z");
+
+  // "Not recorded" is not a doctor and belongs to neither group -- and it stays at the top.
+  assert.deepEqual(outside, ["Not recorded"]);
+  assert.ok(sel.indexOf(">Not recorded<") < sel.indexOf("<optgroup"), "Not recorded comes before the first heading");
+  // Nobody was dropped on the way through: every name the model offers is on the screen once.
+  assert.deepEqual(
+    groups.flatMap(g => g.names).concat(outside.filter(n => n !== "Not recorded")).sort(),
+    formModel().doctors.map(d => d.name).sort(),
+  );
+  // And the headings are short enough for a narrow native picker.
+  groups.forEach(g => assert.ok(g.label.replace(/&#39;/g, "'").length <= 30, `heading too long: ${g.label}`));
+});
+
+test("a doctor with no group at all is still drawn, rather than dropped between the headings", async () => {
+  await withLibraryDoctors();
+  // The one case the two groups cannot claim: the Doctors row itself is gone from the Sheet, but
+  // RX01 still names DOC01. Without an <option> carrying that id the <select> comes back "" and
+  // the save silently erases who prescribed the medicine.
+  world.ctx.db.remove("Doctors", d => d.doctor_id === "DOC01");
+  await loadBoot();
+  await clickOn({ changeSchedule: "RX01" });
+  render();
+  const { groups, outside } = readPicker();
+  assert.equal(groups.length, 2);
+  assert.ok(!groups.some(g => g.names.some(n => /not in the doctor list/i.test(n))), "they are in neither group");
+  assert.ok(outside.some(n => /not in the doctor list/i.test(n)), "but they are still on the screen");
+  assert.match(root.innerHTML, /value="DOC01" selected/);
+
+  await submitOf(makeForm("schedule", [
+    field("prescriptionId", "RX01"), field("frequency", "Daily"),
+    field("mealTiming", "After meal"), field("doctorId", "DOC01"), field("reason", ""),
+  ]));
+  assert.equal(world.ctx.db.rows("Prescriptions").find(r => r.prescription_id === "RX01").doctor_id, "DOC01");
+});

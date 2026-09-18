@@ -4,6 +4,7 @@ import { indexBoot, todayModel, weekModel, warningsForOwner, defaultOwnerId, det
 import { pickImage, shrinkToDataUrl } from "./photoinput.js";
 import { esc } from "./html.js";
 import { fmtFullDay } from "./format.js";
+import { DOCTOR_GROUP } from "./views/common.js";
 import { renderShell, renderLoading } from "./views/shell.js";
 import { renderLogin } from "./views/login.js";
 import { renderConnect } from "./views/connect.js";
@@ -351,10 +352,15 @@ function doctorOptions(doctorId) {
   // top of the list where a thumb reaches it. Deduped by doctor_id -- doctorsModel returns one row
   // per care-team row, so a doctor the owner sees at two hospitals would otherwise be listed twice
   // (the same value both times, so nothing saves wrong, but it reads as a broken screen).
+  //
+  // Each entry carries the group it belongs to. The view draws the two groups under headings of
+  // their own, and it must not have to work out which is which a second time: a list that appears
+  // to restart alphabetically halfway down reads as a broken screen, and the one job this control
+  // has is "did I pick the right doctor".
   const careTeam = [];
   doctorsModel(S.idx, S.owner).forEach(r => {
     const d = r.doctor;
-    if (d && !careTeam.some(x => x.doctor_id === d.doctor_id)) careTeam.push(d);
+    if (d && !careTeam.some(x => x.doctor_id === d.doctor_id)) careTeam.push({ ...d, group: DOCTOR_GROUP.CARE });
   });
   careTeam.sort(byDoctorName);
   // Then every other doctor in the family's shared list. Without these, a doctor added through the
@@ -363,15 +369,20 @@ function doctorOptions(doctorId) {
   // CareTeam tab in the Sheet, which is the very thing this release exists to remove. Presentation
   // only: every name here is already on this phone, in the same bootstrap that draws the library.
   const onTeam = new Set(careTeam.map(d => d.doctor_id));
-  const others = [...S.idx.doctors.values()].filter(d => !onTeam.has(d.doctor_id)).sort(byDoctorName);
+  const others = [...S.idx.doctors.values()]
+    .filter(d => !onTeam.has(d.doctor_id))
+    .map(d => ({ ...d, group: DOCTOR_GROUP.LIBRARY }))
+    .sort(byDoctorName);
   const list = careTeam.concat(others);
   if (doctorId && !list.some(d => d.doctor_id === doctorId)) {
     // The list above already holds every doctor the phone knows about, so getting here means the
     // Doctors row itself has been deleted from the Sheet. That id would then match no <option> at
     // all, the browser would fall back to "Not recorded", harvestForm would read "", and the save
     // would write it -- silently erasing who prescribed the medicine. So it gets an option of its
-    // own, carrying the id the prescription actually holds, and saving keeps it.
-    list.push({ doctor_id: doctorId, name: "Not in the doctor list any more" });
+    // own, carrying the id the prescription actually holds, and saving keeps it. No group: they
+    // are in neither, precisely because they are not in the list any more, and the view draws
+    // them on their own after both headings.
+    list.push({ doctor_id: doctorId, name: "Not in the doctor list any more", group: DOCTOR_GROUP.GONE });
   }
   return list;
 }
@@ -423,7 +434,9 @@ function photoLabel(slot, medicineId) {
 export function formModel() {
   const m = S.form || {};
   if (S.screen === "prescriptionForm") return { ...m, ownerName: ownerName(), medicines: medicineOptions(), doctors: doctorOptions(m.doctorId) };
-  if (S.screen === "scheduleForm") return { ...m, doctors: doctorOptions(m.doctorId) };
+  // ownerName goes to the schedule form as well as the prescription form: "Who prescribed it?"
+  // names the person whose doctors are listed first, and this is the other screen that draws it.
+  if (S.screen === "scheduleForm") return { ...m, ownerName: ownerName(), doctors: doctorOptions(m.doctorId) };
   // What a dose of this medicine is counted in comes from the medicine's form, and is looked up
   // here rather than frozen into S.form, so editing the medicine mid-flow is reflected at once.
   if (S.screen === "doseForm") return { ...m, medicineForm: medicineFormOf(m.prescriptionId) };
