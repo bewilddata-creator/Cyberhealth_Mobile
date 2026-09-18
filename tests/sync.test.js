@@ -22,6 +22,38 @@ test("committed apps-script copies are up to date", () => {
   }
 });
 
+// ---- what the family is actually consenting to ----
+//
+// The Drive calls in apps-script/Drive.gs need a Drive scope, and the automatic scope scan is not
+// something a release should be gambling a first photo upload on. The manifest declares the exact
+// set instead, which also switches the scan (and so the old /** @OnlyCurrentDoc */ annotation)
+// off entirely -- so these two tests pin the declaration and its resolution together. A change
+// here changes the Google consent screen the family sees: update README Part 2 with it.
+test("appsscript.json declares exactly the OAuth scopes this project needs, and no more", () => {
+  const manifest = JSON.parse(readFileSync("apps-script/appsscript.json", "utf8"));
+  assert.deepEqual(manifest.oauthScopes, [
+    // SpreadsheetApp.getActive(), and nothing but this one bound spreadsheet.
+    "https://www.googleapis.com/auth/spreadsheets.currentonly",
+    // DriveApp: opening the family's photo folder BY ID (so drive.file, which only covers files
+    // the script created or the user picked, is not enough), creating files in it, sharing them
+    // link-readable, trashing replaced ones.
+    "https://www.googleapis.com/auth/drive",
+  ]);
+  // Nothing in the project makes an outbound HTTP request or sends mail, so neither scope belongs.
+  assert.equal(manifest.oauthScopes.some(s => /external_request|mail|send/.test(s)), false);
+  assert.equal(manifest.timeZone, "Asia/Bangkok");
+});
+
+test("no .gs file claims @OnlyCurrentDoc, which explicit oauthScopes make a false promise", () => {
+  for (const file of readdirSync("apps-script").filter(f => f.endsWith(".gs"))) {
+    assert.doesNotMatch(
+      readFileSync(join("apps-script", file), "utf8"),
+      /@OnlyCurrentDoc/,
+      `${file}: an explicit oauthScopes list turns the scope scan off, so this annotation would promise a Drive narrowing the declared drive scope does not give`,
+    );
+  }
+});
+
 function loadGs() {
   const context = vm.createContext({ console });
   for (const file of readdirSync("apps-script").filter(f => f.endsWith(".gs")).sort()) {

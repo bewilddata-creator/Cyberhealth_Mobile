@@ -2,6 +2,10 @@
 // Pure validation for prescription writes: no DOM, no Node APIs, no Sheet access.
 // Synced to Apps Script by scripts/sync-gs.mjs, so keep names unique across all synced files.
 
+// The change_type values PrescriptionChanges may hold. "Corrected" is RESERVED AND UNUSED in this
+// release: no action writes it, so nothing to hunt for -- it is kept because release 2b needs it
+// for correcting a mis-dated prescription, and because a value dropped from this list would make
+// any history row already carrying it fail validation.
 const CHANGE_TYPES = ["Started", "Dose changed", "Schedule changed", "Stopped", "Restarted", "Corrected"];
 const MAX_REASON_LENGTH = 500;
 const MEAL_TIMING_VALUES = ["Before meal", "After meal", "With meal", "Any time"];

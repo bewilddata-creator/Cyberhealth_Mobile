@@ -1,7 +1,20 @@
-/** @OnlyCurrentDoc */
 // Web app entry points. Deploy: Deploy > New deployment > Web app, execute as Me, access Anyone.
-// @OnlyCurrentDoc scopes the authorization Google asks for to this one spreadsheet, instead of
-// every Sheet in the family admin's Drive.
+//
+// AUTHORIZATION IS DECLARED, NOT GUESSED. The exact scopes this project asks for are listed in
+// apps-script/appsscript.json ("oauthScopes"), so the consent screen the family sees is fixed and
+// reviewable instead of whatever Apps Script's automatic scope scan happens to infer from the code:
+//   * .../auth/spreadsheets.currentonly -- this one spreadsheet only, never any other Sheet.
+//   * .../auth/drive -- the pill photos. Drive.gs opens the photo folder BY ID (a folder the
+//     family made by hand and pasted into Settings.photo_folder_id), then creates files in it,
+//     shares them link-readable and trashes replaced ones. The narrower .../auth/drive.file grants
+//     access only to files the script itself created or the user picked through Google Picker, so
+//     it cannot open that hand-made folder at all -- see README Part 2.
+//
+// There used to be an OnlyCurrentDoc annotation on this line. It is deliberately GONE, and must
+// not be put back: that annotation only steers the automatic scan, which an explicit "oauthScopes"
+// list switches off entirely, so keeping it would have promised a Drive narrowing the declared
+// drive scope does not give. If the Drive calls in Drive.gs are ever removed, drop the drive scope
+// from the manifest instead. tests/sync.test.js pins both halves of this.
 function doPost(e) {
   let req;
   try {
