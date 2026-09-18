@@ -1,5 +1,5 @@
 // Pure screen models built from bootstrap data. No DOM.
-import { TIMES_OF_DAY, FREQ, WEEKDAYS, DOSE_LOG_WINDOW_DAYS, weekdayOf, addDays, doseItemsOn, slotStatus, countsOnDay, describeFrequency, describeDoses, dedupeActivePrescriptions } from "./schedule.js";
+import { TIMES_OF_DAY, FREQ, WEEKDAYS, DOSE_LOG_WINDOW_DAYS, weekdayOf, addDays, doseItemsOn, doseKey, slotStatus, countsOnDay, describeFrequency, describeDoses, dedupeActivePrescriptions } from "./schedule.js";
 import { resolveMockPhoto } from "./mockphoto.js";
 
 export function driveImageUrl(link) {
@@ -62,18 +62,83 @@ function loadedFloor(today) {
   return addDays(today, -(DOSE_LOG_WINDOW_DAYS - 1));
 }
 
+// What a DoseLog row says went in his mouth: the amount and unit recorded at tick time, never
+// whatever the prescription says now.
+function tickFrom(row) {
+  return row ? { at: String(row.taken_at).slice(11, 16), amount: row.amount_taken, unit: row.unit } : null;
+}
+
+// A dose he ticked that no current PrescriptionDoses row backs any more: the dose was moved to
+// another time of day, removed, or the whole prescription was stopped or narrowed off this day.
+// doseItemsOn can only build items from a CURRENT dose row, so before this these ticks rendered
+// nowhere at all -- Today under-reported what he had taken, and (worse) offered the same tablet
+// again at its new time with nothing on screen to say it had already been swallowed.
+//
+// Reads boot.dose_log only. DoseLog is written by tick/tickAll/untick and by nothing else.
+function receiptItems(idx, prescriptions, date, coveredKeys) {
+  const owned = new Set(prescriptions.map(p => p.id));
+  const out = [];
+  (idx.boot.dose_log || []).forEach(r => {
+    if (String(r.status) !== "Taken" || String(r.date) !== date) return;
+    const timeOfDay = String(r.time_of_day);
+    if (!TIMES_OF_DAY.includes(timeOfDay)) return;
+    const prescriptionId = String(r.prescription_id);
+    if (!owned.has(prescriptionId)) return;
+    const key = doseKey(date, timeOfDay, prescriptionId);
+    // Already drawn as an ordinary ticked row, or a duplicate Taken row a hand-edited Sheet left.
+    if (coveredKeys.has(key) || out.some(x => x.key === key)) return;
+    const prescription = idx.prescriptions.get(prescriptionId);
+    if (!prescription) return;
+    out.push({
+      key, timeOfDay, prescription,
+      // No current dose row is the whole point: `dose: null` is what marks this a receipt, and
+      // what js/views/today.js draws without a tick control.
+      dose: null,
+      medicine: idx.medicines.get(prescription.medicineId) || null,
+      tick: tickFrom(r),
+      receipt: true,
+    });
+  });
+  return out;
+}
+
+// Every dose the app should show for one day: the doses the prescription schedules that day,
+// plus one receipt per already-taken dose the schedule can no longer place -- and one scheduled
+// dose dropped per receipt, so the same tablet is never offered a second time.
+function dayItems(idx, prescriptions, doses, date) {
+  const scheduled = doseItemsOn(prescriptions, doses, date).map(it => ({
+    key: it.key, timeOfDay: it.timeOfDay, prescription: it.prescription, dose: it.dose,
+    medicine: idx.medicines.get(it.prescription.medicineId) || null,
+    tick: tickFrom(idx.ticks.get(it.key)),
+    receipt: false,
+  }));
+  const receipts = receiptItems(idx, prescriptions, date, new Set(scheduled.map(i => i.key)));
+  if (!receipts.length) return scheduled;
+  // He took N doses of this medicine today that the schedule can no longer place; N of the
+  // doses it now places are therefore the same tablets under a new time of day. Drop that many
+  // un-ticked ones, earliest time of day first (doseItemsOn is already in that order) -- showing
+  // one of them as outstanding is exactly how the old version came to prompt a second
+  // blood-pressure tablet. A prescription with no receipt is untouched.
+  const owed = new Map();
+  receipts.forEach(r => { owed.set(r.prescription.id, (owed.get(r.prescription.id) || 0) + 1); });
+  const dropped = new Set();
+  scheduled.forEach(i => {
+    if (i.tick) return;
+    const left = owed.get(i.prescription.id) || 0;
+    if (!left) return;
+    owed.set(i.prescription.id, left - 1);
+    dropped.add(i.key);
+  });
+  return scheduled.filter(i => !dropped.has(i.key)).concat(receipts);
+}
+
 export function todayModel(idx, { ownerId, viewerId, date, today, nowTimeOfDay }) {
   const prescriptions = ownerPrescriptions(idx, ownerId);
   const doses = dosesFor(idx, prescriptions);
   const viewerIsOwner = !!viewerId && viewerId === ownerId;
   const canTick = viewerIsOwner && date <= today;
   const historyNotLoaded = date < loadedFloor(today);
-  const items = doseItemsOn(prescriptions, doses, date).map(it => {
-    const row = idx.ticks.get(it.key);
-    const medicine = idx.medicines.get(it.prescription.medicineId) || null;
-    const tick = row ? { at: String(row.taken_at).slice(11, 16), amount: row.amount_taken, unit: row.unit } : null;
-    return { key: it.key, timeOfDay: it.timeOfDay, prescription: it.prescription, dose: it.dose, medicine, tick };
-  });
+  const items = dayItems(idx, prescriptions, doses, date);
   const slots = TIMES_OF_DAY.map(timeOfDay => {
     const slotItems = items.filter(i => i.timeOfDay === timeOfDay);
     const taken = slotItems.filter(i => i.tick).length;
@@ -98,12 +163,15 @@ export function todayModel(idx, { ownerId, viewerId, date, today, nowTimeOfDay }
   };
 }
 
+// The same list Today draws, so the week strip's dot counts an already-taken dose whose dose row
+// has since moved or been stopped instead of quietly losing it -- the ring and the dot can never
+// disagree about the same day.
 function dayCounts(idx, ownerId, day, includeTimes, filterFn) {
   const prescriptions = ownerPrescriptions(idx, ownerId).filter(filterFn);
   const doses = dosesFor(idx, prescriptions);
-  const items = doseItemsOn(prescriptions, doses, day).filter(i => includeTimes.includes(i.timeOfDay));
+  const items = dayItems(idx, prescriptions, doses, day).filter(i => includeTimes.includes(i.timeOfDay));
   const due = items.length;
-  const taken = items.filter(i => idx.ticks.has(i.key)).length;
+  const taken = items.filter(i => i.tick).length;
   return { due, taken };
 }
 

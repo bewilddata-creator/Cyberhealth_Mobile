@@ -119,6 +119,10 @@ button.banner.warn{background:var(--yellow-2)}
 .dose{display:grid;grid-template-columns:50px minmax(0,1fr) 50px;gap:12px;align-items:center;background:var(--sand);border-radius:22px;padding:10px;transition:background .15s}
 .dose.taken{background:var(--slot-soft)}
 .dose.prn{grid-template-columns:50px minmax(0,1fr)}
+/* A dose already taken whose dose row has since moved, gone, or been stopped: a record of what
+   he swallowed, not something to tick. Dashed edge so it reads as a note, not a control. */
+.dose.receipt{border:1.5px dashed var(--ink-3)}
+.dose.receipt .changed{opacity:1;font-style:normal;font-weight:700}
 .info{border:0;background:none;text-align:left;padding:0;min-width:0}
 .name{font-weight:800;font-size:17px;line-height:1.15;overflow-wrap:anywhere}
 .name em{font-style:normal;font-weight:500;color:var(--ink-2);font-size:14px}

@@ -109,3 +109,60 @@ test("a ticked row whose dose has not changed says nothing extra", () => {
   const html = renderToday({ model, week, ctx, date: "2026-09-18", today: "2026-09-18" });
   assert.doesNotMatch(html, /now 1 tablet/i);
 });
+
+// ---- the receipt row: a dose he ticked whose dose row has since moved, gone, or been stopped ----
+//
+// `dose: null` is what marks it. It must show what he swallowed and when, say plainly why it is
+// no longer an ordinary row, and draw NO tick control -- unticking it would put the moved dose
+// straight back on Today as outstanding, offering a tablet already taken.
+
+function receiptModel(over = {}) {
+  const model = baseModel();
+  const timeOfDay = over.timeOfDay || "Morning";
+  const item = {
+    key: `2026-09-18|${timeOfDay}|RX01`,
+    timeOfDay,
+    prescription: { meal: "After meal", status: over.status || "Active" },
+    dose: null,
+    medicine: { generic_name: "Amlodipine", strength: "5 mg", form: "Tablet" },
+    tick: { at: "07:42", amount: "2", unit: "tablet" },
+    receipt: true,
+  };
+  const slot = model.slots.find(s => s.timeOfDay === timeOfDay);
+  slot.items.push(item);
+  slot.due = 1;
+  slot.taken = 1;
+  slot.status = "done";
+  return { ...model, taken: 1, due: 1 };
+}
+
+test("a receipt row shows the medicine, the amount recorded and the time he ticked", () => {
+  const html = renderToday({ model: receiptModel(), week, ctx, today: "2026-09-18", hour: 9, warnings: [] });
+  assert.match(html, /Amlodipine/);
+  assert.match(html, /<span class="qty">2 tablet<\/span>/, "the amount the DoseLog row recorded");
+  assert.match(html, /07:42/, "the time he ticked it");
+  assert.match(html, /class="dose taken receipt"/);
+});
+
+test("a receipt row is not tickable, even for the owner on today", () => {
+  const model = receiptModel();
+  assert.equal(model.canTick, true, "the owner can tick today -- this is the case that matters");
+  const html = renderToday({ model, week, ctx, today: "2026-09-18", hour: 9, warnings: [] });
+  assert.doesNotMatch(html, /data-tick=/, "a receipt must draw no tick button: there is no live dose row behind it");
+  assert.match(html, /class="check readonly" role="img" data-on="true"/);
+  assert.doesNotMatch(html, /data-tickall=/);
+});
+
+test("a receipt row says in plain words why it is not an ordinary row", () => {
+  const changed = renderToday({ model: receiptModel(), week, ctx, today: "2026-09-18", hour: 9, warnings: [] });
+  assert.match(changed, /Already taken\. This dose has been changed since\./);
+  const stopped = renderToday({ model: receiptModel({ status: "Stopped" }), week, ctx, today: "2026-09-18", hour: 9, warnings: [] });
+  assert.match(stopped, /Already taken\. This medicine has been stopped since\./);
+  assert.doesNotMatch(stopped, /has been changed since/);
+});
+
+test("a receipt row in the Noon section is drawn in the Noon section", () => {
+  const html = renderToday({ model: receiptModel({ timeOfDay: "Noon" }), week, ctx, today: "2026-09-18", hour: 9, warnings: [] });
+  const noon = html.slice(html.indexOf('aria-label="Noon"'), html.indexOf('aria-label="Evening"'));
+  assert.match(noon, /Amlodipine/, "it belongs to the time of day he actually took it at");
+});

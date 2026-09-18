@@ -38,6 +38,15 @@ function mealTag(meal) {
 const shownAmount = item => (item.tick ? item.tick.amount : item.dose.amount);
 const shownUnit = item => (item.tick ? item.tick.unit : item.dose.unit);
 function changedNote(item) {
+  // A receipt (item.dose === null): he ticked this dose, and the prescription no longer has a
+  // dose row to hang it off -- it was moved to another time of day, taken off, or the medicine
+  // was stopped or narrowed off this day. Say so in words he can read without his glasses,
+  // rather than letting the dose vanish off Today as it used to.
+  if (!item.dose) {
+    return item.prescription.status === "Stopped"
+      ? `<div class="s changed">Already taken. This medicine has been stopped since.</div>`
+      : `<div class="s changed">Already taken. This dose has been changed since.</div>`;
+  }
   if (!item.tick) return "";
   const sameAmount = String(item.tick.amount) === String(item.dose.amount);
   const sameUnit = String(item.tick.unit) === String(item.dose.unit);
@@ -52,10 +61,13 @@ function doseRow(item, canTick) {
   // A tick always shows the amount recorded in the DoseLog row, not the prescription's current
   // dose -- so this line still reads right even after the dose has since been changed.
   const by = t ? `<div class="by">✓ ${esc(t.at)} · ${esc(t.amount)} ${esc(t.unit)}</div>` : "";
-  const control = canTick
+  // A receipt is never tickable and never untickable: there is no live dose row behind it to tick
+  // against, and unticking it would put the moved dose straight back on Today as outstanding --
+  // offering a tablet he has already swallowed, which is the whole bug.
+  const control = canTick && item.dose
     ? `<button class="check" data-tick="${esc(item.key)}" aria-pressed="${!!t}" aria-label="${t ? "Untick" : "Tick"} ${esc(name)}">${I.check}</button>`
     : `<span class="check readonly" role="img" data-on="${!!t}" aria-label="${esc(name)}: ${t ? "taken" : "not taken yet"}">${I.check}</span>`;
-  return `<div class="dose ${t ? "taken" : ""}" style="--slot-soft:${SLOT_COLORS[item.timeOfDay][1]}">${thumb(item.medicine)}
+  return `<div class="dose ${t ? "taken" : ""}${item.dose ? "" : " receipt"}" style="--slot-soft:${SLOT_COLORS[item.timeOfDay][1]}">${thumb(item.medicine)}
     <div class="info"><div class="name">${medName(item.medicine)}</div>
       <div class="meta"><span class="qty">${esc(shownAmount(item))} ${esc(shownUnit(item))}</span>${mealTag(item.prescription.meal)}${shot}</div>${changedNote(item)}${by}</div>
     ${control}</div>`;

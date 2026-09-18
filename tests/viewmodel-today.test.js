@@ -196,6 +196,119 @@ test("weekModel: a day older than the loaded window shows no dot, not a false 'm
   assert.equal(day.result, "", "older than the DoseLog window: no dot, never 'miss'");
 });
 
+// ---- A dose he has already ticked must never disappear off Today, and never be offered again ----
+//
+// The reproduction this release's last review found: Dad ticks RX01 Morning (Amlodipine, 2
+// tablet), his daughter then uses "Change how much to take" to clear Morning and fill Noon. The
+// ring went 1/3 -> 0/3, the ticked Morning row vanished, and an un-ticked Noon row appeared at 2
+// tablet -- the tablet he had already swallowed, presented as outstanding and tickable. That is
+// the old version's "prompted a second blood-pressure tablet" bug reached by a new route.
+
+function bootFor(ctx, token) {
+  const r = handle({ action: "bootstrap", token }, ctx);
+  assert.equal(r.ok, true, r.ok ? "" : r.error.message);
+  return indexBoot(r.data);
+}
+const dadsDay = idx => todayModel(idx, { ownerId: "U01", viewerId: "U01", date: "2026-09-15", today: "2026-09-15", nowTimeOfDay: "Morning" });
+
+function tickRx01Morning(ctx, token) {
+  const r = handle({ action: "tick", token, prescriptionId: "RX01", date: "2026-09-15", timeOfDay: "Morning", doseId: "DS01", amount: 2 }, ctx);
+  assert.equal(r.ok, true, JSON.stringify(r));
+}
+
+// What every one of the three cases below must end up showing.
+function assertMorningReceiptSurvives(model) {
+  const morning = model.slots.find(s => s.timeOfDay === "Morning");
+  const row = morning.items.find(i => i.prescription.id === "RX01");
+  assert.ok(row, "the dose he actually took must still show, in the time of day he took it at");
+  assert.equal(row.tick.amount, "2", "at the amount the DoseLog row recorded, not whatever the prescription says now");
+  assert.equal(row.tick.unit, "tablet");
+  assert.equal(row.dose, null, "no current dose row backs it: it is a receipt, not a tickable dose");
+  // The ring counted 1 of 3 before the change, and must still count 1 of 3 after it.
+  assert.equal(model.taken, 1, "the ring must not under-report what he took");
+  assert.equal(model.due, 3);
+  // And nothing anywhere offers that same tablet again.
+  const offered = model.slots.flatMap(s => s.items).filter(i => i.prescription.id === "RX01" && !i.tick);
+  assert.deepEqual(offered, [], "a tablet already swallowed must never be offered as outstanding");
+}
+
+test("moving a ticked dose to another time of day keeps it on Today as taken, and never offers that tablet again", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Dad", "dad123");
+  tickRx01Morning(ctx, token);
+  const moved = handle({ action: "changePrescriptionDose", token, prescriptionId: "RX01", doses: [{ timeOfDay: "Noon", amount: 2, unit: "tablet" }] }, ctx);
+  assert.equal(moved.ok, true, JSON.stringify(moved));
+
+  // The record was never the problem: the DoseLog row survives and the history reads correctly.
+  const log = ctx.db.rows("DoseLog").filter(r => r.prescription_id === "RX01");
+  assert.equal(log.length, 1);
+  assert.equal(log[0].time_of_day, "Morning");
+  const changes = ctx.db.rows("PrescriptionChanges").filter(c => c.prescription_id === "RX01");
+  assert.match(changes[changes.length - 1].after, /Noon 2 tablets/);
+
+  const model = dadsDay(bootFor(ctx, token));
+  assertMorningReceiptSurvives(model);
+  const noon = model.slots.find(s => s.timeOfDay === "Noon");
+  assert.equal(noon.due, 0, "the moved dose must not reappear at Noon as something still to take");
+  assert.equal(noon.canTickAll, false);
+});
+
+test("stopping a medicine does not erase what was already ticked for it today", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Dad", "dad123");
+  tickRx01Morning(ctx, token);
+  assert.equal(handle({ action: "stopPrescription", token, prescriptionId: "RX01" }, ctx).ok, true);
+  const model = dadsDay(bootFor(ctx, token));
+  assertMorningReceiptSurvives(model);
+  assert.equal(model.slots.find(s => s.timeOfDay === "Morning").items.find(i => i.prescription.id === "RX01").prescription.status, "Stopped");
+});
+
+test("narrowing a schedule past the viewed day does not erase what was already ticked that day", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Dad", "dad123");
+  tickRx01Morning(ctx, token);
+  // 2026-09-15 is a Tuesday, so Wednesdays-only takes RX01 off that day entirely.
+  const r = handle({ action: "changePrescriptionSchedule", token, prescriptionId: "RX01", frequency: "Weekdays", weekdays: ["Wed"] }, ctx);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assertMorningReceiptSurvives(dadsDay(bootFor(ctx, token)));
+});
+
+test("a receipt is not a licence to drop a dose still genuinely due at another time", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Dad", "dad123");
+  // RX02 is Morning 1 tablet AND Evening 2 tablets. Tick the Morning one, then move ONLY the
+  // Morning row to Noon: the Evening dose is untouched and must still be offered.
+  assert.equal(handle({ action: "tick", token, prescriptionId: "RX02", date: "2026-09-15", timeOfDay: "Morning", doseId: "DS02", amount: 1 }, ctx).ok, true);
+  assert.equal(handle({
+    action: "changePrescriptionDose", token, prescriptionId: "RX02",
+    doses: [{ timeOfDay: "Noon", amount: 1, unit: "tablet" }, { timeOfDay: "Evening", amount: 2, unit: "tablet" }],
+  }, ctx).ok, true);
+  const model = dadsDay(bootFor(ctx, token));
+  const evening = model.slots.find(s => s.timeOfDay === "Evening");
+  const stillDue = evening.items.find(i => i.prescription.id === "RX02");
+  assert.ok(stillDue, "the Evening dose was never taken and never moved -- it must still be due");
+  assert.equal(stillDue.tick, null);
+  assert.equal(stillDue.dose.amount, 2);
+  // Only the moved Morning dose is accounted for by the receipt.
+  assert.equal(model.slots.find(s => s.timeOfDay === "Noon").items.filter(i => i.prescription.id === "RX02").length, 0);
+});
+
+test("the week strip counts a receipt too, so the dot and the ring can never disagree", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Dad", "dad123");
+  // Everything due on 2026-09-14 (Mon) ticked: RX01 Morning, RX02 Morning and Evening.
+  for (const [rx, time, doseId, amount] of [["RX01", "Morning", "DS01", 2], ["RX02", "Morning", "DS02", 1], ["RX02", "Evening", "DS03", 2]]) {
+    assert.equal(handle({ action: "tick", token, prescriptionId: rx, date: "2026-09-14", timeOfDay: time, doseId, amount }, ctx).ok, true);
+  }
+  // Then RX01's Morning dose is moved to Noon. countsOnDay already excludes RX01 from that past
+  // day (its last change is later), so the day must stay "ok" -- and would even without the
+  // receipt. What matters is that adding receipts did not turn a fully-ticked day into a miss.
+  assert.equal(handle({ action: "changePrescriptionDose", token, prescriptionId: "RX01", doses: [{ timeOfDay: "Noon", amount: 2, unit: "tablet" }] }, ctx).ok, true);
+  const idx = bootFor(ctx, token);
+  const day = weekModel(idx, "U01", "2026-09-15", "2026-09-15", "Morning").find(d => d.date === "2026-09-14");
+  assert.equal(day.result, "ok", "a day on which he took everything must never read as a miss");
+});
+
 // ---- warningsForOwner (C2's Today banner) ----
 
 test("warningsForOwner shows only warnings for that person, plus sheet-wide (blank user_id) ones", () => {

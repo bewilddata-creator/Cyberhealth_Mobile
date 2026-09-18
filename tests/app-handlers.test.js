@@ -12,6 +12,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { handle } from "../server/actions.js";
+import { bangkokToday } from "../js/schedule.js";
 import { fakeCtx, loginAs } from "./fixtures.js";
 
 // ---- the DOM, and the browser behaviours that matter ----
@@ -42,6 +43,11 @@ let pickerOpened = 0;
 const store = new Map();
 const confirms = [];
 let confirmAnswer = true;
+// What the next tap on "Add photo" picks. null is a cancelled picker (the only thing this harness
+// could do before, which is why uploadPhoto's whole write path -- shrinkToDataUrl, the upload,
+// the reload, sessionEnded, photoDone -- had no Node test at all). Set it to a file and the fake
+// <input type=file> fires `change` instead of `cancel`.
+let nextPickedFile = null;
 
 globalThis.location = { protocol: "https:", hash: "", search: "" };
 globalThis.localStorage = {
@@ -49,23 +55,52 @@ globalThis.localStorage = {
   setItem: (k, v) => store.set(k, String(v)),
   removeItem: k => store.delete(k),
 };
+// A 1x1 JPEG's worth of base64 -- the bytes are never decoded here, they only have to satisfy
+// server/photos.js's parseDataUrl, which is the real thing on the other side of the upload.
+const CANVAS_DATA_URL = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAE=";
+let canvasesMade = 0;
+
 globalThis.document = {
   body: { appendChild: () => {} },
   activeElement: null,
   getElementById: id => (id === "app" ? root : null),
   addEventListener: () => {},
-  // Only js/photoinput.js's pickImage uses this. It answers "cancelled", so a tap on a photo
-  // button can be followed all the way into the handler without a real file or canvas.
-  createElement: () => {
+  // js/photoinput.js makes two kinds of element: the hidden <input type=file> that pickImage
+  // opens, and the <canvas> shrinkToDataUrl draws the picked photo onto.
+  createElement: tag => {
+    if (String(tag).toLowerCase() === "canvas") {
+      canvasesMade++;
+      return {
+        width: 0, height: 0,
+        getContext: () => ({ drawImage: () => {} }),
+        toDataURL: () => CANVAS_DATA_URL,
+      };
+    }
     const on = {};
     pickerOpened++;
-    return {
+    const input = {
       style: {}, files: null,
       addEventListener: (type, fn) => { on[type] = fn; },
-      click: () => { if (on.cancel) on.cancel(); },
+      click: () => {
+        if (!nextPickedFile) return on.cancel && on.cancel();
+        input.files = [nextPickedFile];
+        nextPickedFile = null; // one tap, one photo -- the same way a real picker behaves
+        if (on.change) on.change();
+      },
       remove: () => {},
     };
+    return input;
   },
+};
+// The rest of what shrinkToDataUrl touches. The Image resolves as soon as its src is set, with a
+// size big enough that the scale-down branch is the one that runs.
+// Added to Node's own URL rather than replacing it, so nothing that needs `new URL(...)` breaks.
+globalThis.URL.createObjectURL = () => "blob:fake";
+globalThis.URL.revokeObjectURL = () => {};
+globalThis.Image = class {
+  constructor() { this.naturalWidth = 2400; this.naturalHeight = 1800; this.onload = null; this.onerror = null; }
+  set src(_v) { if (this.onload) this.onload(); }
+  get src() { return "blob:fake"; }
 };
 globalThis.confirm = message => { confirms.push(message); return confirmAnswer; };
 globalThis.FormData = FakeFormData;
@@ -127,6 +162,8 @@ async function fresh() {
   confirms.length = 0;
   confirmAnswer = true;
   pickerOpened = 0;
+  canvasesMade = 0;
+  nextPickedFile = null;
   return world;
 }
 
@@ -521,6 +558,43 @@ test("delete names the medicine and says why nothing is lost, and saying no send
   assert.equal(S.detail, null);
 });
 
+// ---- who prescribed it must survive a doctor who is gone ----
+
+test("a doctor who has left the care team is still offered, so saving keeps them", async () => {
+  await fresh();
+  // CT01 is Dad's care-team row for DOC01, who wrote RX01. Deactivate it: DOC01 is no longer on
+  // the care team, but the prescription still names him.
+  world.ctx.db.update("CareTeam", "care_id", "CT01", { active: "FALSE" });
+  await loadBoot();
+  await clickOn({ changeSchedule: "RX01" });
+  assert.ok(formModel().doctors.some(d => d.doctor_id === "DOC01"), "the doctor the prescription names must still be in the picker");
+  render();
+  assert.match(root.innerHTML, /value="DOC01" selected/);
+});
+
+test("a doctor whose row was deleted outright is still offered, so the change cannot erase them", async () => {
+  await fresh();
+  // The narrower case: the Doctors row itself is gone from the Sheet. Nothing matched the
+  // prescription's doctor_id, so the browser selected "Not recorded", harvestForm read "", and
+  // changePrescriptionSchedule wrote it -- losing a medical fact with nothing on screen to say so.
+  world.ctx.db.remove("Doctors", d => d.doctor_id === "DOC01");
+  await loadBoot();
+  await clickOn({ changeSchedule: "RX01" });
+  const offered = formModel().doctors.find(d => d.doctor_id === "DOC01");
+  assert.ok(offered, "the id the prescription holds must still have an <option> to come back as");
+  assert.match(offered.name, /not in the doctor list/i, "and it says plainly why it has no name");
+  render();
+  assert.match(root.innerHTML, /value="DOC01" selected/);
+
+  // The whole point: a save through that picker keeps the doctor instead of blanking them.
+  await submitOf(makeForm("schedule", [
+    field("prescriptionId", "RX01"), field("frequency", "Daily"),
+    field("mealTiming", "After meal"), field("doctorId", "DOC01"), field("reason", ""),
+  ]));
+  assert.equal(lastSent("changePrescriptionSchedule").doctorId, "DOC01");
+  assert.equal(world.ctx.db.rows("Prescriptions").find(r => r.prescription_id === "RX01").doctor_id, "DOC01");
+});
+
 // ---- the photo buttons ----
 
 test("the photo target splits on the last bar, so an id with a bar in it still works", () => {
@@ -556,6 +630,159 @@ test("tapping Add photo opens the phone's picker, and cancelling it sends nothin
   await clickOn({ uploadPhoto: "MED01|box" });
   assert.equal(pickerOpened, 1);
   assert.equal(world.sent.length, 0);
+});
+
+// The one write path on this branch with no end-to-end Node test, because the old fake picker
+// could only ever cancel: uploadPhoto returned before shrinkToDataUrl, the upload, the reload and
+// photoDone ever ran.
+test("choosing a photo shrinks it, uploads it to the medicine's slot, and says so", async () => {
+  await fresh();
+  S.screen = "detail";
+  S.detail = "RX01";
+  nextPickedFile = { name: "box.jpg", type: "image/jpeg" };
+  await clickOn({ uploadPhoto: "MED01|box" });
+
+  assert.equal(pickerOpened, 1);
+  assert.equal(canvasesMade, 1, "the photo is shrunk on the phone before it goes anywhere");
+  const req = lastSent("uploadMedicinePhoto");
+  assert.ok(req, "the upload must actually be sent");
+  assert.equal(req.medicineId, "MED01");
+  assert.equal(req.slot, "box");
+  assert.match(req.dataUrl, /^data:image\/jpeg;base64,/);
+  // The server accepted it, put it in Drive, and the Sheet now holds the link.
+  assert.equal(world.created.length, 1);
+  assert.match(world.created[0].folderName, /MED01/);
+  assert.equal(world.created[0].fileName, "box.jpg");
+  assert.match(world.ctx.db.rows("Medicines").find(m => m.medicine_id === "MED01").photo_box, /drive\.google\.com/);
+  // And the whole picture was reloaded afterwards, not patched on screen.
+  assert.deepEqual(world.sent.map(r => r.action), ["uploadMedicinePhoto", "bootstrap"]);
+  assert.equal(S.toast, "Photo saved.");
+});
+
+test("replacing a photo the server could not bin says so instead of claiming a clean save", async () => {
+  await fresh();
+  S.screen = "detail";
+  S.detail = "RX01";
+  // MED01's pill_front already holds a Drive link in the fixture, and this fake Drive refuses to
+  // trash it -- the server's own warning has to reach the family rather than a bare "Photo saved."
+  world.trashed.length = 0;
+  world.ctx.drive.trash = url => { world.trashed.push(url); return false; };
+  nextPickedFile = { name: "pill.jpg", type: "image/jpeg" };
+  await clickOn({ uploadPhoto: "MED01|pill_front" });
+  assert.equal(world.trashed.length, 1, "the old file is binned by the URL the column held");
+  assert.match(S.toast, /old one is still in Drive/);
+});
+
+test("a photo upload whose reload ends the session leaves the user on the login screen", async () => {
+  await fresh();
+  S.screen = "detail";
+  S.detail = "RX01";
+  world.expireSession = true;
+  nextPickedFile = { name: "box.jpg", type: "image/jpeg" };
+  await clickOn({ uploadPhoto: "MED01|box" });
+  // The upload itself landed...
+  assert.match(world.ctx.db.rows("Medicines").find(m => m.medicine_id === "MED01").photo_box, /drive\.google\.com/);
+  // ...and there is no app screen left to congratulate anyone on.
+  assertOnLoginScreen();
+});
+
+test("a photo that finishes after the family has left the medicine stays quiet", async () => {
+  await fresh();
+  S.screen = "detail";
+  S.detail = "RX01";
+  nextPickedFile = { name: "box.jpg", type: "image/jpeg" };
+  const inFlight = clickOn({ uploadPhoto: "MED01|box" });
+  S.screen = "meds"; // he wanders off while it uploads
+  S.detail = null;
+  await inFlight;
+  assert.match(world.ctx.db.rows("Medicines").find(m => m.medicine_id === "MED01").photo_box, /drive\.google\.com/);
+  assert.doesNotMatch(S.toast, /Photo saved/, "a success message belongs to the screen that started the upload, not whatever is on screen when it lands");
+});
+
+// ---- moving a dose he has already ticked today ----
+//
+// The daughter may well still want to save this -- the doctor changed the dose this morning, after
+// he had taken it. But she must hear about it BEFORE it is written, naming the medicine and what
+// he already took, rather than finding out from Today afterwards. Information, not a veto: saying
+// yes still saves.
+
+// The phone's own Bangkok today, which is what Today and the tick handler both use. The fixture
+// clock is wound forward to match it so the server will accept a tick for that day.
+async function tickedThisMorning() {
+  await fresh();
+  world.ctx.setNow(Date.now());
+  await loadBoot();
+  const today = bangkokToday(Date.now());
+  const r = handle({ action: "tick", token: world.token, prescriptionId: "RX01", date: today, timeOfDay: "Morning", doseId: "DS01", amount: 2 }, world.ctx);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  await loadBoot();
+  assert.ok(S.idx.ticks.get(`${today}|Morning|RX01`), "the tick has to be in the picture the phone is holding");
+  world.sent.length = 0;
+  confirms.length = 0;
+  return today;
+}
+
+test("saving a dose change that clears a time of day he has already ticked today asks first", async () => {
+  await tickedThisMorning();
+  await clickOn({ changeDose: "RX01" });
+  confirmAnswer = false;
+  await submitOf(makeForm("dose", [
+    field("prescriptionId", "RX01"),
+    ...DOSE_FIELDS({ Noon: "2" }),
+    field("reason", "The doctor moved it to lunchtime"),
+  ]));
+  assert.equal(confirms.length, 1, "she must be told before it is written, not after");
+  assert.match(confirms[0], /Amlodipine/, "the question names the medicine");
+  assert.match(confirms[0], /Morning 2 tablet/, "and what he already took");
+  assert.match(confirms[0], /stays in the record/, "and that nothing is lost");
+  // Saying no writes nothing at all.
+  assert.equal(world.sent.length, 0);
+  assert.equal(S.screen, "doseForm");
+  assert.deepEqual(
+    world.ctx.db.rows("PrescriptionDoses").filter(d => d.prescription_id === "RX01").map(d => d.time_of_day),
+    ["Morning"],
+  );
+});
+
+test("it is information, not a veto: saying yes still saves the move", async () => {
+  await tickedThisMorning();
+  await clickOn({ changeDose: "RX01" });
+  confirmAnswer = true;
+  await submitOf(makeForm("dose", [
+    field("prescriptionId", "RX01"),
+    ...DOSE_FIELDS({ Noon: "2" }),
+    field("reason", "The doctor moved it to lunchtime"),
+  ]));
+  assert.equal(confirms.length, 1);
+  assert.deepEqual(lastSent("changePrescriptionDose").doses, [{ timeOfDay: "Noon", amount: 2, unit: "tablet" }]);
+  assert.deepEqual(
+    world.ctx.db.rows("PrescriptionDoses").filter(d => d.prescription_id === "RX01").map(d => d.time_of_day),
+    ["Noon"],
+  );
+  assert.equal(S.screen, "detail");
+  assert.match(S.toast, /new dose is saved/);
+  // And the dose he took is still in the record, untouched: DoseLog is written by tick/tickAll/
+  // untick and by nothing else.
+  const log = world.ctx.db.rows("DoseLog").filter(r => r.prescription_id === "RX01");
+  assert.equal(log.length, 1);
+  assert.equal(log[0].time_of_day, "Morning");
+  assert.equal(log[0].amount_taken, "2");
+});
+
+test("a dose change that keeps the ticked time of day asks nothing, even when the amount changes", async () => {
+  await tickedThisMorning();
+  await clickOn({ changeDose: "RX01" });
+  await submitOf(makeForm("dose", [field("prescriptionId", "RX01"), ...DOSE_FIELDS({ Morning: "1" })]));
+  assert.deepEqual(confirms, [], "Morning is still there: nothing is being taken off today's list");
+  assert.equal(lastSent("changePrescriptionDose").doses[0].amount, 1);
+});
+
+test("a dose change asks nothing when nothing has been ticked today", async () => {
+  await fresh();
+  await clickOn({ changeDose: "RX01" });
+  await submitOf(makeForm("dose", [field("prescriptionId", "RX01"), ...DOSE_FIELDS({ Noon: "2" })]));
+  assert.deepEqual(confirms, []);
+  assert.ok(lastSent("changePrescriptionDose"));
 });
 
 // ---- the form's own controls ----

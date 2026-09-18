@@ -318,7 +318,12 @@ function doctorOptions(doctorId) {
   });
   if (doctorId && !list.some(d => d.doctor_id === doctorId)) {
     const d = S.idx.doctors.get(doctorId);
-    if (d) list.push(d);
+    // A doctor_id whose Doctors row has actually been deleted matches no <option> at all, so the
+    // browser falls back to "Not recorded", harvestForm reads "", and the save writes that --
+    // silently erasing who prescribed the medicine. Same silent loss as a doctor who merely left
+    // the care team, with a narrower trigger, so it is closed the same way: an option carrying the
+    // id the prescription actually holds, so saving keeps it instead of wiping it.
+    list.push(d || { doctor_id: doctorId, name: "Not in the doctor list any more" });
   }
   return list;
 }
@@ -538,9 +543,41 @@ function savePrescription(form) {
   });
 }
 
+// Which times of day today already have a tick for this prescription that the new dose list
+// would take off Today: a time that is filled now and blank in what is about to be saved. A time
+// with no current dose row is left out -- that tick is already shown on Today as a receipt, so
+// saving changes nothing about it.
+function ticksClearedBy(prescriptionId, doses) {
+  const today = bangkokToday(now());
+  const keeping = new Set((doses || []).map(d => d.timeOfDay));
+  const current = S.idx.dosesByPrescription.get(prescriptionId) || [];
+  return TIMES_OF_DAY
+    .filter(t => !keeping.has(t) && current.some(d => d.timeOfDay === t))
+    .map(t => S.idx.ticks.get(`${today}|${t}|${prescriptionId}`))
+    .filter(Boolean);
+}
+
+// Moving or clearing a time of day he has ALREADY ticked today is a real thing to want to do --
+// the doctor changed the dose this morning -- but the daughter should hear about it before it is
+// written, not discover it afterwards. So this names the medicine and what he already took, and
+// says what does and does not change. It is information, not a veto: saying yes still saves.
+function confirmClearedTicks(model) {
+  const cleared = ticksClearedBy(model.prescriptionId, model.doses);
+  if (!cleared.length) return true;
+  const name = prescriptionName(model.prescriptionId);
+  const who = ownerName() || "He";
+  const what = cleared.map(r => `${r.time_of_day} ${r.amount_taken} ${r.unit}`).join(", ");
+  return confirm(`${who} has already ticked ${name} today: ${what}. Saving this takes that time of day off today's list. What was taken stays in the record and still shows on Today, so nothing is lost. Save the new dose?`);
+}
+
 // No doctorId key: the dose form has no doctor <select>, and changePrescriptionDose only touches
 // doctor_id when the key is actually sent -- sending "" would erase who prescribed it.
 function saveDose(form) {
+  // Harvested here as well as inside runSave so the question can name what is actually about to
+  // be sent. harvestForm only reads the form, so doing it twice changes nothing.
+  const model = harvestForm(form);
+  S.form = model;
+  if (!confirmClearedTicks(model)) return;
   return runSave(form, m => call("changePrescriptionDose", {
     prescriptionId: m.prescriptionId || "",
     doses: m.doses || [],
