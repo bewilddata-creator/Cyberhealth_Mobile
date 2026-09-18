@@ -82,6 +82,11 @@ let world = null;
 globalThis.fetch = async (url, opts) => {
   const req = JSON.parse(opts.body);
   world.sent.push(req);
+  // A write that lands followed by a reload that does not: the one case where the phone knows
+  // something the screen does not.
+  if (req.action === "bootstrap" && world.breakBootstrap) {
+    return { json: async () => ({ ok: false, error: { code: "NETWORK", message: "No internet connection. Check Wi-Fi or mobile data and try again." } }) };
+  }
   const reply = handle(req, world.ctx);
   return { json: async () => JSON.parse(JSON.stringify(reply)) };
 };
@@ -105,7 +110,7 @@ function newWorld() {
   };
   const token = loginAs(ctx, "Dad", "dad123");
   store.set("cyberhealth.token", token);
-  world = { ctx, token, sent: [], created, trashed };
+  world = { ctx, token, sent: [], created, trashed, breakBootstrap: false };
 }
 
 // A logged-in phone showing Dad's medicines, with nothing recorded from a previous test.
@@ -331,7 +336,59 @@ test("every save reloads the whole picture from the Sheet instead of patching wh
   assert.equal(S.idx.dosesByPrescription.get("RX01")[0].amount, 3);
 });
 
+test("a save that works, followed by a reload that fails, says both things", async () => {
+  await fresh();
+  await clickOn({ changeDose: "RX01" });
+  world.breakBootstrap = true;
+  await submitOf(makeForm("dose", [field("prescriptionId", "RX01"), ...DOSE_FIELDS({ Morning: "3" })]));
+  // The write really happened, so the message must not read as a failure...
+  assert.equal(world.ctx.db.rows("PrescriptionDoses").filter(d => d.prescription_id === "RX01")[0].amount, "3");
+  assert.match(S.toast, /The new dose is saved\./);
+  // ...and the screen is now stale, so it must not read as fine either. Both, in one message,
+  // with the reason the reload failed and what to do about it.
+  assert.match(S.toast, /couldn't refresh/);
+  assert.match(S.toast, /Refresh on the More tab/);
+  assert.match(S.toast, /No internet connection/);
+  assert.equal(S.formError, "");
+  assert.equal(S.screen, "detail");
+  // The stale note belongs to that one save and must not leak onto the next message.
+  world.breakBootstrap = false;
+  await clickOn({ changeDose: "RX01" });
+  await submitOf(makeForm("dose", [field("prescriptionId", "RX01"), ...DOSE_FIELDS({ Morning: "4" })]));
+  assert.equal(S.toast, "The new dose is saved.");
+});
+
+test("a stop whose reload fails says the medicine stopped and that the screen is stale", async () => {
+  await fresh();
+  world.breakBootstrap = true;
+  await clickOn({ stop: "RX01" });
+  assert.equal(world.ctx.db.rows("Prescriptions").find(r => r.prescription_id === "RX01").status, "Stopped");
+  assert.match(S.toast, /Stopped taking Amlodipine/);
+  assert.match(S.toast, /couldn't refresh/);
+});
+
 // ---- the buttons that act straight away ----
+
+test("stop asks first, naming the medicine and what it does, and saying no changes nothing", async () => {
+  await fresh();
+  confirmAnswer = false;
+  await clickOn({ stop: "RX01" });
+  assert.equal(confirms.length, 1);
+  assert.match(confirms[0], /Amlodipine/);
+  assert.match(confirms[0], /won't show on Today/);
+  assert.match(confirms[0], /already ticked for it is kept/);
+  assert.match(confirms[0], /start it again later/);
+  assert.equal(world.sent.length, 0);
+  assert.equal(world.ctx.db.rows("Prescriptions").find(r => r.prescription_id === "RX01").status, "Active");
+
+  // Restart is the one that does not ask: it only puts a medicine back, and Stop undoes it.
+  confirmAnswer = true;
+  await clickOn({ stop: "RX01" });
+  confirms.length = 0;
+  await clickOn({ restart: "RX01" });
+  assert.deepEqual(confirms, []);
+  assert.equal(world.ctx.db.rows("Prescriptions").find(r => r.prescription_id === "RX01").status, "Active");
+});
 
 test("stopping and restarting say which medicine they did it to", async () => {
   await fresh();

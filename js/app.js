@@ -110,6 +110,10 @@ async function showLogin(message = "") {
   render();
 }
 
+// Answers with "" when the phone's picture is now the Sheet's, or with the reason it isn't. A
+// caller that has just written something needs to know: a save followed by a failed reload leaves
+// a confident screen showing pre-save data, which must be said out loud rather than papered over
+// with a success toast (see announce()).
 export async function loadBoot() {
   if (S.boot) toast("Refreshing…");
   try {
@@ -131,13 +135,19 @@ export async function loadBoot() {
     if (boot.warnings.length) console.warn("Sheet problems:", boot.warnings);
     if (S.toast === "Refreshing…") S.toast = "";
     render();
+    return "";
   } catch (e) {
     if (e.code === "AUTH_REQUIRED" || (e.code === "CONFIG" && !S.boot)) {
       S.boot = null;
-      return showLogin(e.code === "CONFIG" ? e.message : "Please log in again.");
+      await showLogin(e.code === "CONFIG" ? e.message : "Please log in again.");
+      return e.message;
     }
-    if (!S.boot) return showLogin(e.message);
+    if (!S.boot) {
+      await showLogin(e.message);
+      return e.message;
+    }
     toast(e.message);
+    return e.message;
   }
 }
 
@@ -377,10 +387,24 @@ function openForm(screen, from, model) {
   Object.assign(S, { form: model, formError: "", formBusy: false, formDirty: false, formStash: null, formFrom: from, screen, toast: "" });
   render();
 }
+// Whatever the last reload after a write said (F2). Set only by the handlers that write, and
+// cleared by announce() as soon as it has been said, so it can never leak onto a later message.
+let staleAfterSave = "";
+
+// The only place a "that worked" message is said. When the write worked but the reload that
+// follows it did not, the family is told both: the change IS saved (so it must not read as a
+// failure), and the screen is now stale (so it must not read as fine). A bare success toast over
+// pre-save data is a screen lying confidently, which is the one thing this release exists to stop.
+function announce(message) {
+  const err = staleAfterSave;
+  staleAfterSave = "";
+  toast(err ? `${message} The screen couldn't refresh, so it may be out of date — tap Refresh on the More tab. (${err})` : message);
+}
+
 function leaveForm(screen, message) {
   Object.assign(S, { form: null, formStash: null, formError: "", formBusy: false, formDirty: false });
   go(screen);
-  if (message) toast(message);
+  if (message) announce(message);
 }
 
 function openPrescriptionForm() {
@@ -430,10 +454,10 @@ function openNewMedicine(form) {
 async function runSave(form, send, finish) {
   const model = harvestForm(form);
   S.form = model;
-  S.formBusy = true; S.formError = ""; render();
+  S.formBusy = true; S.formError = ""; staleAfterSave = ""; render();
   try {
     const result = await send(model);
-    await loadBoot();
+    staleAfterSave = await loadBoot();
     S.formBusy = false;
     finish(result, model);
   } catch (e) {
@@ -454,7 +478,7 @@ function saveMedicine(form) {
       const back = { ...S.formStash, medicineId: saved.medicine_id };
       Object.assign(S, { form: back, formStash: null, formError: "", formBusy: false, formDirty: true, formFrom: "meds", screen: "prescriptionForm" });
       render();
-      return toast(`${saved.generic_name} is in the list now, and chosen below.`);
+      return announce(`${saved.generic_name} is in the list now, and chosen below.`);
     }
     leaveForm(S.formFrom === "detail" && S.detail ? "detail" : "meds", editing ? "Saved." : `${saved.generic_name} is in the medicine list.`);
   });
@@ -509,16 +533,31 @@ let acting = false;
 async function actOnPrescription(action, prescriptionId, message, after) {
   if (acting) return;
   acting = true;
+  staleAfterSave = "";
   try {
     await call(action, { prescriptionId, reason: "" });
-    await loadBoot();
+    staleAfterSave = await loadBoot();
     if (after) after();
-    toast(message);
+    announce(message);
   } catch (e) {
+    staleAfterSave = "";
     toast(e.message);
   } finally {
     acting = false;
   }
+}
+
+// Stop asks too, for the same reason Delete does: it sits directly above Delete in a stack of
+// buttons on a phone, and a mis-tap takes a medicine off Today silently -- so he simply stops
+// taking it, with nothing on screen saying anything is wrong. The toast and the row moving to the
+// Stopped section are not enough: a toast fades, and that section may never be scrolled to. So the
+// question names the medicine and says exactly what will and will not happen. Restart deliberately
+// does NOT ask: it only puts a medicine back, and stopping again undoes it.
+function stopPrescription(prescriptionId) {
+  const name = prescriptionName(prescriptionId);
+  const ask = `Stop taking ${name}? It won't show on Today any more. Everything already ticked for it is kept, and you can start it again later.`;
+  if (!confirm(ask)) return;
+  return actOnPrescription("stopPrescription", prescriptionId, `Stopped taking ${name}. It's in the Stopped list.`);
 }
 
 // The one thing in this release that cannot be undone, so the question names the medicine and
@@ -550,13 +589,15 @@ async function uploadPhoto(medicineId, slot) {
   if (!file) return;
   if (S.formBusy) return;
   S.formBusy = true;
+  staleAfterSave = "";
   toast("Saving the photo…");
   try {
     const dataUrl = await shrinkToDataUrl(file);
     const { warnings } = await call("uploadMedicinePhoto", { medicineId, slot, dataUrl });
-    await loadBoot();
-    toast(warnings && warnings.length ? warnings[0] : "Photo saved.");
+    staleAfterSave = await loadBoot();
+    announce(warnings && warnings.length ? warnings[0] : "Photo saved.");
   } catch (e) {
+    staleAfterSave = "";
     toast(e.message);
   } finally {
     S.formBusy = false;
@@ -569,11 +610,13 @@ async function removePhoto(medicineId, slot) {
   if (!confirm(`Remove the ${label || "chosen"} photo of ${medicineNameOf(medicineId)}? The medicine itself stays on the list.`)) return;
   if (S.formBusy) return;
   S.formBusy = true;
+  staleAfterSave = "";
   try {
     const { warnings } = await call("removeMedicinePhoto", { medicineId, slot });
-    await loadBoot();
-    toast(warnings && warnings.length ? warnings[0] : "Photo removed.");
+    staleAfterSave = await loadBoot();
+    announce(warnings && warnings.length ? warnings[0] : "Photo removed.");
   } catch (e) {
+    staleAfterSave = "";
     toast(e.message);
   } finally {
     S.formBusy = false;
@@ -619,7 +662,7 @@ root.addEventListener("click", e => {
   if ("addPrescription" in d) return openPrescriptionForm();
   if (d.changeDose) return openDoseForm(d.changeDose);
   if (d.changeSchedule) return openScheduleForm(d.changeSchedule);
-  if (d.stop) return actOnPrescription("stopPrescription", d.stop, `Stopped taking ${prescriptionName(d.stop)}. It's in the Stopped list.`);
+  if (d.stop) return stopPrescription(d.stop);
   if (d.restart) return actOnPrescription("restartPrescription", d.restart, `Taking ${prescriptionName(d.restart)} again.`);
   if (d.delete) return deletePrescription(d.delete);
   if (d.editMedicine) return openMedicineForm(d.editMedicine);
