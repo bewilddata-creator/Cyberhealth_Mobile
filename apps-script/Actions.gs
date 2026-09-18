@@ -881,7 +881,9 @@ Object.assign(ACTIONS, {
       return urls;
     });
     const warnings = [];
-    if (doomed.some(url => !ctx.drive.trash(url))) {
+    // Every photo is attempted even after one fails: .some would stop at the first failing
+    // trash and leave the rest sitting in Drive forever with nobody having tried them.
+    if (doomed.map(url => ctx.drive.trash(url)).some(ok => !ok)) {
       warnings.push("The medicine was removed, but some of its photos are still in Drive. You can delete them there.");
     }
     return { deleted: true, warnings };

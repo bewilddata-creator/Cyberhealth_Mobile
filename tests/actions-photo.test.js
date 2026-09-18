@@ -100,6 +100,27 @@ test("uploading before anyone set a photo folder up still works: the folder is m
   assert.equal(ctx.db.rows("Medicines").find(m => m.medicine_id === "MED01").photo_box, r.data.url);
 });
 
+// F4: the Drive upload must happen before the script lock is taken, not during it -- a slow phone
+// upload must never hold the Sheet against the rest of the family. Recording ctx.locksTaken() at
+// the moment put() is called, and comparing it to the count just before handle() ran, is what
+// actually proves no lock was held for the duration of the "upload" -- moving ctx.drive.put
+// inside ctx.lock passes every other test in this file.
+test("uploadMedicinePhoto creates the Drive file before taking the lock, not during it", () => {
+  const ctx = fakeCtx();
+  withDrive(ctx);
+  const token = loginAs(ctx, "Pim", "pim123");
+  const realPut = ctx.drive.put;
+  let locksWhilePutRan = null;
+  ctx.drive.put = (...args) => {
+    locksWhilePutRan = ctx.locksTaken();
+    return realPut(...args);
+  };
+  const before = ctx.locksTaken();
+  const r = handle({ action: "uploadMedicinePhoto", token, medicineId: "MED01", slot: "box", dataUrl: JPEG }, ctx);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(locksWhilePutRan, before, "the script lock must not be held while the Drive upload runs");
+});
+
 test("uploading when the folder id in Settings cannot be opened refuses, and makes no second folder", () => {
   const ctx = fakeCtx();
   const drive = withDrive(ctx);

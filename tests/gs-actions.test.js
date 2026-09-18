@@ -500,6 +500,26 @@ test("a medicine deleted after uploadMedicinePhoto's first read is still seen in
   assert.match(r.error.message, /isn't in the list any more/);
 });
 
+// F3: uploadDoctorPhoto's pre-lock check runs before the (potentially slow) Drive upload, and the
+// doctor row can vanish while that upload is in flight. Without the in-lock re-check, the write
+// would silently touch no row and the phone would be told the photo saved when nothing holds it.
+// Deleting that re-check breaks no test in the fake-ctx suite (fakeCtx's lock never invalidates a
+// cache there is none of), which is exactly why this needs the real .gs harness: only here does
+// deleting the row mid-lock, via the request cache, actually have somewhere to go wrong.
+test("a doctor deleted after uploadDoctorPhoto's first read is still seen inside the lock", () => {
+  const context = loadGs();
+  installFakes(context);
+  const token = loginAsTop(context);
+  commitOnNextLock(context, () => {
+    const sheet = sheetOf(context, "Doctors");
+    sheet.grid = sheet.grid.filter(r => r[0] !== "DOC01");
+  });
+  const r = post(context, { action: "uploadDoctorPhoto", token, doctorId: "DOC01", dataUrl: JPEG });
+  assert.equal(r.ok, false, `the in-lock re-check must read the Sheet, not the request cache: ${JSON.stringify(r)}`);
+  assert.equal(r.error.code, "BAD_INPUT");
+  assert.match(r.error.message, /isn't in the list any more/);
+});
+
 test("restartPrescription sees a prescription that went Active after its first read, and refuses", () => {
   const context = loadGs();
   installFakes(context);

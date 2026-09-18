@@ -186,7 +186,7 @@ test("deleteMedicine refuses one someone takes or used to take", () => {
   }
 });
 
-test("deleteMedicine trashes the photos it had, and a failed trash is a warning not a failure", () => {
+test("deleteMedicine trashes the photos it had", () => {
   const ctx = fakeCtx();
   const drive = withDrive(ctx);
   const token = loginAs(ctx, "Pim", "pim123");
@@ -196,6 +196,27 @@ test("deleteMedicine trashes the photos it had, and a failed trash is a warning 
   const r = handle({ action: "deleteMedicine", token, medicineId: id }, ctx);
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.deepEqual(drive.trashed, [up.data.url]);
+});
+
+// F1/F2: a medicine with several photos must have EVERY one attempted, even after an earlier one
+// fails -- .some(url => !trash(url)) would stop at the first failure and leave the rest sitting
+// in the family's Drive forever. ctx.drive.trash always returning false here, on withDrive's
+// otherwise-succeeding fake, is what actually exercises the warning path (unlike the test above,
+// where trash never fails and so never proves the warning branch is reachable at all).
+test("deleteMedicine attempts every photo's trash even after one fails, and warns instead of failing", () => {
+  const ctx = fakeCtx();
+  const drive = withDrive(ctx);
+  const token = loginAs(ctx, "Pim", "pim123");
+  const added = handle({ action: "addMedicine", token, fields: { generic_name: "Losartan", form: "Tablet" } }, ctx);
+  const id = added.data.medicine_id;
+  const up1 = handle({ action: "uploadMedicinePhoto", token, medicineId: id, slot: "box", dataUrl: JPEG }, ctx);
+  const up2 = handle({ action: "uploadMedicinePhoto", token, medicineId: id, slot: "packet_front", dataUrl: JPEG }, ctx);
+  const attempted = [];
+  ctx.drive.trash = url => { attempted.push(url); return false; };
+  const r = handle({ action: "deleteMedicine", token, medicineId: id }, ctx);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.ok(r.data.warnings.length > 0, "a failed trash must not fail the delete");
+  assert.deepEqual(attempted.sort(), [up1.data.url, up2.data.url].sort(), "every photo must be attempted, not just the first");
 });
 
 test("uploadDoctorPhoto stores the link on the doctor, and replacing trashes the old file", () => {
@@ -211,6 +232,22 @@ test("uploadDoctorPhoto stores the link on the doctor, and replacing trashes the
   assert.deepEqual(drive.trashed, [first.data.url]);
 });
 
+// F2: withDrive's trash always succeeds, so a warning path claimed by a passing test can still be
+// a thrown error underneath. Forcing trash to fail is what actually proves the old file's trash
+// failing is a warning, not a failure that loses the just-saved new photo.
+test("uploadDoctorPhoto's failed trash of the old file is a warning, not a failure", () => {
+  const ctx = fakeCtx();
+  withDrive(ctx);
+  const token = loginAs(ctx, "Pim", "pim123");
+  const first = handle({ action: "uploadDoctorPhoto", token, doctorId: "DOC01", dataUrl: JPEG }, ctx);
+  assert.equal(first.ok, true, JSON.stringify(first));
+  ctx.drive.trash = () => false;
+  const second = handle({ action: "uploadDoctorPhoto", token, doctorId: "DOC01", dataUrl: JPEG }, ctx);
+  assert.equal(second.ok, true, JSON.stringify(second));
+  assert.ok(second.data.warnings.length > 0, "a failed trash of the old file must not fail the upload");
+  assert.equal(ctx.db.rows("Doctors").find(d => d.doctor_id === "DOC01").photo, second.data.url, "the new photo is still stored");
+});
+
 test("removeDoctorPhoto clears the column and trashes the file", () => {
   const ctx = fakeCtx();
   const drive = withDrive(ctx);
@@ -220,6 +257,40 @@ test("removeDoctorPhoto clears the column and trashes the file", () => {
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.equal(ctx.db.rows("Doctors").find(d => d.doctor_id === "DOC01").photo, "");
   assert.deepEqual(drive.trashed, [up.data.url]);
+});
+
+// F2: same reasoning as uploadDoctorPhoto above -- a trash that always succeeds cannot prove the
+// warning-not-failure path exists.
+test("removeDoctorPhoto's failed trash is a warning, not a failure", () => {
+  const ctx = fakeCtx();
+  withDrive(ctx);
+  const token = loginAs(ctx, "Pim", "pim123");
+  handle({ action: "uploadDoctorPhoto", token, doctorId: "DOC01", dataUrl: JPEG }, ctx);
+  ctx.drive.trash = () => false;
+  const r = handle({ action: "removeDoctorPhoto", token, doctorId: "DOC01" }, ctx);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.ok(r.data.warnings.length > 0, "a failed trash must not fail the removal");
+  assert.equal(ctx.db.rows("Doctors").find(d => d.doctor_id === "DOC01").photo, "", "the column is still cleared");
+});
+
+// F4: same ordering as uploadMedicinePhoto -- the Drive upload must run before the script lock is
+// taken, so a slow phone upload never holds the Sheet against the rest of the family. Comparing
+// ctx.locksTaken() at the moment put() runs against the count just before handle() is what
+// actually proves it; moving ctx.drive.put inside ctx.lock passes every other test here.
+test("uploadDoctorPhoto creates the Drive file before taking the lock, not during it", () => {
+  const ctx = fakeCtx();
+  withDrive(ctx);
+  const token = loginAs(ctx, "Pim", "pim123");
+  const realPut = ctx.drive.put;
+  let locksWhilePutRan = null;
+  ctx.drive.put = (...args) => {
+    locksWhilePutRan = ctx.locksTaken();
+    return realPut(...args);
+  };
+  const before = ctx.locksTaken();
+  const r = handle({ action: "uploadDoctorPhoto", token, doctorId: "DOC01", dataUrl: JPEG }, ctx);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(locksWhilePutRan, before, "the script lock must not be held while the Drive upload runs");
 });
 
 test("a doctor photo must be a JPEG or PNG, and not too big", () => {
