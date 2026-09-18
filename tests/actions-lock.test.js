@@ -58,6 +58,14 @@ const WRITE_ACTIONS = [
   // never inside `build` -- see the loop's comment for why the order is load-bearing.
   ["deleteHospital", (t, hospitalId) => ({ action: "deleteHospital", token: t, hospitalId }),
     (ctx, t) => handle({ action: "addHospital", token: t, fields: { name: "Temp Clinic" } }, ctx).data.hospital_id],
+  ["addDoctor", t => ({ action: "addDoctor", token: t, fields: { name: "Dr. Nid P." } })],
+  ["updateDoctor", t => ({ action: "updateDoctor", token: t, doctorId: "DOC01", fields: { specialty: "Cardiology and BP" } })],
+  // Every fixture doctor (DOC01, DOC02) is referenced elsewhere, so deleteDoctor needs a fresh,
+  // unreferenced one to act on -- same hazard and same fix as deleteHospital above: this add is
+  // SETUP, run (and committed) before `before` is captured, never inside `build`.
+  ["deleteDoctor", (t, doctorId) => ({ action: "deleteDoctor", token: t, doctorId }),
+    (ctx, t) => handle({ action: "addDoctor", token: t, fields: { name: "Dr. Temp" } }, ctx).data.doctor_id],
+  ["setDoctorHospitals", t => ({ action: "setDoctorHospitals", token: t, doctorId: "DOC01", hospitalIds: ["HOS02"] })],
 ];
 
 // Actions that only read. A lock here would serialize every phone's refresh behind every write

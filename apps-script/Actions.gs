@@ -497,6 +497,16 @@ function hospitalFields(fields) {
   return patch;
 }
 
+// photo is deliberately NOT here: it only ever holds a Drive link the server itself wrote, so a
+// caller cannot point it at a file of their choosing.
+const DOCTOR_FIELDS = ["name", "specialty", "phone", "other_contact", "notes"];
+
+function doctorFields(fields) {
+  const patch = {};
+  DOCTOR_FIELDS.forEach(k => { if (fields && fields[k] !== undefined) patch[k] = str(fields[k]).slice(0, 200); });
+  return patch;
+}
+
 // Every library delete answers the same question: does anything still point at this row? If it
 // does, removing it would leave a prescription naming a doctor who no longer exists, or a dose
 // log for a medicine that has vanished -- the family's history would stop reading correctly. So
@@ -797,6 +807,84 @@ Object.assign(ACTIONS, {
       }
       ctx.db.remove("Hospitals", h => str(h.hospital_id) === hospitalId);
       return { deleted: true };
+    });
+  },
+
+  addDoctor(req, ctx) {
+    const { user } = requireUser(req, ctx);
+    const patch = doctorFields(req.fields);
+    if (!patch.name) throw new AppError("BAD_INPUT", "A doctor needs a name.");
+    return ctx.lock(() => {
+      const stamp = bangkokStamp(ctx.nowMs());
+      const row = Object.assign({ doctor_id: ctx.newId("DOC") }, patch, {
+        created_at: stamp, created_by: user.user_id, updated_at: stamp, updated_by: user.user_id,
+      });
+      ctx.db.append("Doctors", row);
+      return stripRow(ctx.db.rows("Doctors").find(d => str(d.doctor_id) === row.doctor_id));
+    });
+  },
+
+  updateDoctor(req, ctx) {
+    const { user } = requireUser(req, ctx);
+    const doctorId = str(req.doctorId);
+    const patch = doctorFields(req.fields);
+    if (Object.prototype.hasOwnProperty.call(patch, "name") && !patch.name) {
+      throw new AppError("BAD_INPUT", "A doctor needs a name.");
+    }
+    return ctx.lock(() => {
+      if (!ctx.db.rows("Doctors").some(d => str(d.doctor_id) === doctorId)) {
+        throw new AppError("BAD_INPUT", "That doctor isn't in the list any more. Refresh and try again.");
+      }
+      patch.updated_at = bangkokStamp(ctx.nowMs());
+      patch.updated_by = user.user_id;
+      ctx.db.update("Doctors", "doctor_id", doctorId, patch);
+      return stripRow(ctx.db.rows("Doctors").find(d => str(d.doctor_id) === doctorId));
+    });
+  },
+
+  deleteDoctor(req, ctx) {
+    requireUser(req, ctx);
+    const doctorId = str(req.doctorId);
+    return ctx.lock(() => {
+      if (!ctx.db.rows("Doctors").some(d => str(d.doctor_id) === doctorId)) {
+        throw new AppError("BAD_INPUT", "That doctor isn't in the list any more. Refresh and try again.");
+      }
+      const held = referencesTo(ctx, [
+        { tab: "Prescriptions", column: "doctor_id", value: doctorId, label: "a medicine someone takes" },
+        { tab: "CareTeam", column: "doctor_id", value: doctorId, label: "someone's care team" },
+      ]);
+      if (held.length) {
+        throw new AppError("CONFLICT", `This doctor is still named on ${held.join(" and ")}, so they stay in the list. That keeps the records readable.`);
+      }
+      // A doctor-hospital link says where someone works, not that anyone was treated -- there is
+      // no history in it to protect, so it goes with the doctor rather than blocking the delete.
+      ctx.db.remove("DoctorHospitals", dh => str(dh.doctor_id) === doctorId);
+      ctx.db.remove("Doctors", d => str(d.doctor_id) === doctorId);
+      return { deleted: true };
+    });
+  },
+
+  // Replaces the whole set for one doctor, so the form can send what the user ticked without
+  // working out what changed. All or nothing: an unknown hospital refuses the lot rather than
+  // saving half of what they asked for.
+  setDoctorHospitals(req, ctx) {
+    requireUser(req, ctx);
+    const doctorId = str(req.doctorId);
+    const asked = Array.isArray(req.hospitalIds) ? req.hospitalIds.map(str).filter(Boolean) : [];
+    const wanted = [];
+    asked.forEach(id => { if (!wanted.includes(id)) wanted.push(id); });
+    return ctx.lock(() => {
+      if (!ctx.db.rows("Doctors").some(d => str(d.doctor_id) === doctorId)) {
+        throw new AppError("BAD_INPUT", "That doctor isn't in the list any more. Refresh and try again.");
+      }
+      const known = ctx.db.rows("Hospitals").map(h => str(h.hospital_id));
+      const missing = wanted.filter(id => !known.includes(id));
+      if (missing.length) throw new AppError("BAD_INPUT", "One of those hospitals isn't in the list any more. Refresh and try again.");
+      ctx.db.remove("DoctorHospitals", dh => str(dh.doctor_id) === doctorId);
+      wanted.forEach(hospitalId => ctx.db.append("DoctorHospitals", {
+        doctor_hospital_id: ctx.newId("DH"), doctor_id: doctorId, hospital_id: hospitalId,
+      }));
+      return { hospital_ids: wanted };
     });
   },
 });
