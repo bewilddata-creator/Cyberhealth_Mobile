@@ -34,5 +34,11 @@ function liveCtx_() {
     nowMs: () => Date.now(),
     lock: withLock_,
     log: err => console.error(err && err.stack ? err.stack : err),
+    settings: key => SheetSettings.get(key),
+    drive: {
+      put: (folderName, fileName, base64, mimeType) =>
+        DriveStore.putImage(SheetSettings.get("photo_folder_id"), folderName, fileName, base64, mimeType),
+      trash: url => DriveStore.trashByUrl(url),
+    },
   };
 }

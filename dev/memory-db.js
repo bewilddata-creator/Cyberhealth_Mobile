@@ -21,9 +21,19 @@ export function memoryDb(tables) {
   const isBlankRow = r => Object.keys(r).every(k => k === "_row" || String(r[k] == null ? "" : r[k]).trim() === "");
   return {
     tables: t,
+    // Every known column of the tab is present on every row, defaulting to "" -- same as
+    // SheetDb.rows() (apps-script/Data.gs), which reads a fixed set of headers regardless of
+    // which cells a given append() actually wrote. Without this, a partial append() (e.g.
+    // addMedicine, which only sets the fields the caller sent) would come back missing keys
+    // here while behaving fine against the real Sheet.
     rows(tab) {
+      const cols = columnsOf(tab);
       return need(tab)
-        .map((r, i) => ({ ...r, _row: i + 2 })) // _row is computed before the blank filter, so real rows keep their true number
+        .map((r, i) => {
+          const full = { _row: i + 2 }; // computed before the blank filter, so real rows keep their true number
+          cols.forEach(c => { full[c] = r[c] == null ? "" : r[c]; });
+          return full;
+        })
         .filter(r => !isBlankRow(r));
     },
     append(tab, obj) {

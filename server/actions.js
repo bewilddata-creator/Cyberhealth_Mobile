@@ -4,6 +4,7 @@ import { isActiveUser, publicUser, SECTIONS, grantFor, canRead, canEdit, readabl
 import { MAX_ATTEMPTS, SESSION_DAYS, makePasswordRecord, verifyPassword, passwordProblem, isResetCode, tokenHash } from "../js/authcore.js";
 import { normalizePrescription, normalizeDose, isDue, bangkokToday, bangkokTimeOfDay, bangkokStamp, addDays, parseDate, TIMES_OF_DAY, FREQ, DOSE_LOG_WINDOW_DAYS, dedupeActivePrescriptions, describeSchedule } from "../js/schedule.js";
 import { validateDoses, validateScheduleFields, MAX_REASON_LENGTH } from "../server/prescriptions.js";
+import { isPhotoSlot, photoColumn, parseDataUrl, photoFolderName, photoFileName, MAX_PHOTO_BYTES } from "../server/photos.js";
 
 export class AppError extends Error {
   constructor(code, message) { super(message); this.code = code; }
@@ -479,6 +480,14 @@ function writeDoseRows(ctx, prescriptionId, doses) {
   }));
 }
 
+const MEDICINE_FIELDS = ["generic_name", "brand_name", "strength", "form", "purpose", "notes"];
+
+function medicineFields(fields) {
+  const patch = {};
+  MEDICINE_FIELDS.forEach(k => { if (fields && fields[k] !== undefined) patch[k] = str(fields[k]).slice(0, 200); });
+  return patch;
+}
+
 Object.assign(ACTIONS, {
   addPrescription(req, ctx) {
     const userId = str(req.userId);
@@ -608,5 +617,90 @@ Object.assign(ACTIONS, {
       ctx.db.remove("Prescriptions", r => str(r.prescription_id) === prescriptionId);
       return { deleted: true };
     });
+  },
+
+  addMedicine(req, ctx) {
+    const { user } = requireUser(req, ctx);
+    const patch = medicineFields(req.fields);
+    if (!patch.generic_name) throw new AppError("BAD_INPUT", "A medicine needs a name.");
+    return ctx.lock(() => {
+      const stamp = bangkokStamp(ctx.nowMs());
+      const row = Object.assign({ medicine_id: ctx.newId("MED") }, patch, {
+        created_at: stamp, created_by: user.user_id, updated_at: stamp, updated_by: user.user_id,
+      });
+      ctx.db.append("Medicines", row);
+      return stripRow(ctx.db.rows("Medicines").find(m => str(m.medicine_id) === row.medicine_id));
+    });
+  },
+
+  updateMedicine(req, ctx) {
+    const { user } = requireUser(req, ctx);
+    const medicineId = str(req.medicineId);
+    const patch = medicineFields(req.fields);
+    if (Object.prototype.hasOwnProperty.call(patch, "generic_name") && !patch.generic_name) {
+      throw new AppError("BAD_INPUT", "A medicine needs a name.");
+    }
+    return ctx.lock(() => {
+      if (!ctx.db.rows("Medicines").some(m => str(m.medicine_id) === medicineId)) {
+        throw new AppError("BAD_INPUT", "That medicine isn't in the list any more. Refresh and try again.");
+      }
+      patch.updated_at = bangkokStamp(ctx.nowMs());
+      patch.updated_by = user.user_id;
+      ctx.db.update("Medicines", "medicine_id", medicineId, patch);
+      return stripRow(ctx.db.rows("Medicines").find(m => str(m.medicine_id) === medicineId));
+    });
+  },
+
+  // The Drive file is created BEFORE the lock is taken: a slow upload must not hold the Sheet
+  // against everyone else, and a failed upload must leave nothing behind to clean up. The old
+  // file is trashed last, by the URL the column actually held -- never by scanning the folder.
+  uploadMedicinePhoto(req, ctx) {
+    const { user } = requireUser(req, ctx);
+    const medicineId = str(req.medicineId);
+    const slot = str(req.slot);
+    if (!isPhotoSlot(slot)) throw new AppError("BAD_INPUT", "That isn't one of the photo slots.");
+    const parsed = parseDataUrl(req.dataUrl);
+    if (!parsed) throw new AppError("BAD_INPUT", "That photo has to be a JPEG or PNG image.");
+    if (parsed.bytes > MAX_PHOTO_BYTES) throw new AppError("BAD_INPUT", "That photo is too big. Try taking it again.");
+    const rootId = ctx.settings("photo_folder_id");
+    if (!rootId) throw new AppError("BAD_INPUT", "No photo folder is set up yet. Ask whoever set up the Sheet to add one.");
+    const medicine = ctx.db.rows("Medicines").find(m => str(m.medicine_id) === medicineId);
+    if (!medicine) throw new AppError("BAD_INPUT", "That medicine isn't in the list any more. Refresh and try again.");
+    const created = ctx.drive.put(photoFolderName(medicine), photoFileName(slot, parsed.mimeType), parsed.base64, parsed.mimeType);
+    const column = photoColumn(slot);
+    const previous = ctx.lock(() => {
+      const before = str((ctx.db.rows("Medicines").find(m => str(m.medicine_id) === medicineId) || {})[column]);
+      const patch = { updated_at: bangkokStamp(ctx.nowMs()), updated_by: user.user_id };
+      patch[column] = created.url;
+      ctx.db.update("Medicines", "medicine_id", medicineId, patch);
+      return before;
+    });
+    const warnings = [];
+    if (previous && previous !== created.url && !ctx.drive.trash(previous)) {
+      warnings.push("The photo was saved, but the old one is still in Drive. You can delete it there.");
+    }
+    return { url: created.url, warnings };
+  },
+
+  removeMedicinePhoto(req, ctx) {
+    const { user } = requireUser(req, ctx);
+    const medicineId = str(req.medicineId);
+    const slot = str(req.slot);
+    if (!isPhotoSlot(slot)) throw new AppError("BAD_INPUT", "That isn't one of the photo slots.");
+    const column = photoColumn(slot);
+    const previous = ctx.lock(() => {
+      const row = ctx.db.rows("Medicines").find(m => str(m.medicine_id) === medicineId);
+      if (!row) throw new AppError("BAD_INPUT", "That medicine isn't in the list any more. Refresh and try again.");
+      const before = str(row[column]);
+      const patch = { updated_at: bangkokStamp(ctx.nowMs()), updated_by: user.user_id };
+      patch[column] = "";
+      ctx.db.update("Medicines", "medicine_id", medicineId, patch);
+      return before;
+    });
+    const warnings = [];
+    if (previous && !ctx.drive.trash(previous)) {
+      warnings.push("The photo was removed from the app, but the file is still in Drive. You can delete it there.");
+    }
+    return { warnings };
   },
 });

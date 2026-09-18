@@ -292,3 +292,46 @@ test("the history row's doctor is the one actually on the prescription, not one 
   const changes = ctx.db.rows("PrescriptionChanges").filter(c => c.prescription_id === "RX01");
   assert.equal(changes[changes.length - 1].doctor_id, rx.doctor_id, "history and the row it describes must agree");
 });
+
+// ---- Task 5's own tests ----
+
+test("addMedicine trims the whitelisted fields and ignores anything else", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Pim", "pim123");
+  const r = handle({ action: "addMedicine", token, fields: { generic_name: "  Losartan ", strength: "50 mg", photo_box: "https://evil/x.jpg", medicine_id: "HACK" } }, ctx);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.data.generic_name, "Losartan");
+  assert.equal(r.data.photo_box, "", "a photo URL can only be set by uploading");
+  assert.ok(r.data.medicine_id.startsWith("MED-"), "the id is the server's, not the caller's");
+});
+
+test("addMedicine needs a generic name", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Pim", "pim123");
+  const r = handle({ action: "addMedicine", token, fields: { strength: "50 mg" } }, ctx);
+  assert.equal(r.ok, false);
+  assert.equal(r.error.code, "BAD_INPUT");
+});
+
+test("updateMedicine changes the shared library row for everyone", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Pim", "pim123");
+  const r = handle({ action: "updateMedicine", token, medicineId: "MED01", fields: { generic_name: "Amlodipine besylate" } }, ctx);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(ctx.db.rows("Medicines").find(m => m.medicine_id === "MED01").generic_name, "Amlodipine besylate");
+});
+
+test("any logged-in user may edit the shared library, with no sharing row at all", () => {
+  const ctx = fakeCtx();
+  // Top has no password in the fixture (only a reset code), so set one first -- same pattern as
+  // the "viewer with only View access" test above.
+  const token = handle({ action: "setPassword", name: "Top", code: "123456", newPassword: "shared-code-pw" }, ctx).data.token;
+  assert.equal(handle({ action: "addMedicine", token, fields: { generic_name: "Aspirin" } }, ctx).ok, true);
+});
+
+test("a logged-out caller may not touch the library", () => {
+  const ctx = fakeCtx();
+  const r = handle({ action: "addMedicine", fields: { generic_name: "Aspirin" } }, ctx);
+  assert.equal(r.ok, false);
+  assert.equal(r.error.code, "AUTH_REQUIRED");
+});
