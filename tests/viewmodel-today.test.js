@@ -324,12 +324,25 @@ test("warningsForOwner shows only warnings for that person, plus sheet-wide (bla
 
 // ---- defaultOwnerId (M5) ----
 
-test("defaultOwnerId opens on the Primary person when the viewer can read their Medicines", () => {
+test("defaultOwnerId opens on the viewer's own medicines, not the Primary person's", () => {
   const people = [
     { user_id: "U01", display_name: "Dad", role: "Primary", medicines: "View" },
     { user_id: "U02", display_name: "Pim", role: "Family", medicines: "Edit" },
   ];
-  assert.equal(defaultOwnerId(people, "U02"), "U01");
+  assert.equal(defaultOwnerId(people, "U02"), "U02");
+});
+
+test("defaultOwnerId opens the Primary person on their own list too", () => {
+  const people = [
+    { user_id: "U01", display_name: "Dad", role: "Primary", medicines: "Edit" },
+    { user_id: "U02", display_name: "Pim", role: "Family", medicines: "Edit" },
+  ];
+  assert.equal(defaultOwnerId(people, "U01"), "U01");
+});
+
+test("defaultOwnerId falls back to the Primary person when the viewer isn't in the list at all", () => {
+  const people = [{ user_id: "U01", display_name: "Dad", role: "Primary", medicines: "View" }];
+  assert.equal(defaultOwnerId(people, "U09"), "U01");
 });
 
 test("defaultOwnerId falls back to the viewer when Primary's Medicines aren't readable", () => {

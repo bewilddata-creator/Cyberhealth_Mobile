@@ -199,10 +199,14 @@ export function warningsForOwner(warnings, ownerId) {
   return (warnings || []).filter(w => w.user_id === ownerId || w.user_id === "");
 }
 
-// Which person the app should open on: the spec's Primary user, but only when the viewer can
-// actually read their Medicines -- otherwise the viewer's own record (M5).
+// Which person the app should open on: yourself. Everyone lands on their own medicines and taps
+// the person switcher to look at someone else -- so nobody is ever unsure whose list they are
+// reading, which matters most for the one person who is also the one ticking doses off.
+// The Primary fallback is only for a viewer who somehow isn't in `people` at all.
 export function defaultOwnerId(people, viewerId) {
-  const primary = (people || []).find(p => p.role === "Primary" && p.medicines);
+  const list = people || [];
+  if (list.some(p => p.user_id === viewerId && p.medicines)) return viewerId;
+  const primary = list.find(p => p.role === "Primary" && p.medicines);
   return primary ? primary.user_id : viewerId;
 }
 
