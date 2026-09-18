@@ -456,9 +456,11 @@ In `scripts/sync-gs.mjs`, add to `FILES` **before** the `server/actions.js` entr
 Run: `npm test`
 Expected: PASS.
 
-- [ ] **Step 6: Write the failing test for `applyPrescriptionChange`**
+- [ ] **Step 6: Note the tests that Task 4 will carry**
 
-Create `tests/actions-write.test.js`. It uses the same fixture helpers the existing `tests/actions-data.test.js` uses — read that file's first 30 lines and copy its setup imports and its `loggedIn`-style helper rather than inventing a new one.
+**Do not create `tests/actions-write.test.js` in this task.** `applyPrescriptionChange` is a private helper with no action calling it yet, so it cannot be exercised until Task 4 lands the actions — and this plan's Global Constraints require every commit to leave the suite green. Task 4 creates that file and carries the three tests below along with its own.
+
+They are reproduced here only so you can see what your helper must satisfy; **they are Task 4's to write**, not yours.
 
 ```js
 import { test } from "node:test";
@@ -513,12 +515,7 @@ test("a reason longer than 500 characters is cut to 500, not refused", () => {
 
 Note `describeDoses`/`describeSchedule` pluralise the unit, so 2 tablets renders as `Morning 2 tablets` and 0.5 as `Morning 0.5 tablets` — match on what `pluralUnit` actually produces rather than assuming the singular.
 
-- [ ] **Step 7: Run to verify it fails**
-
-Run: `npm test 2>&1 | grep -E "changePrescriptionDose|Unknown action" | head`
-Expected: FAIL — `Unknown action.`
-
-- [ ] **Step 8: Implement `applyPrescriptionChange`**
+- [ ] **Step 7: Implement `applyPrescriptionChange`**
 
 Add to `server/actions.js`, among the other private helpers (after `writeTaken`, before the `Object.assign(ACTIONS, {…})` block that begins at line 209). Add `describeSchedule` to the existing one-line import from `../js/schedule.js`, and add a one-line import from `../server/prescriptions.js` for `validateDoses`, `validateScheduleFields` and `MAX_REASON_LENGTH`.
 
@@ -586,16 +583,16 @@ test("the row handed back to the phone carries the stamps that were just written
 });
 ```
 
-- [ ] **Step 9: Run the tests**
+- [ ] **Step 8: Run the tests**
 
 Run: `npm test`
-Expected: the three `applyPrescriptionChange` tests still fail (no `changePrescriptionDose` action yet — that is Task 4), every other test passes. Leave `tests/actions-write.test.js` failing and say so in the report; Task 4 makes it pass. Do not weaken the tests to make them green.
+Expected: PASS — every existing test plus the new `tests/prescriptions.test.js`. `applyPrescriptionChange` and `readPrescription` are defined but not yet called by any action; that is expected and Task 4 covers them. If any pre-existing test now fails, that is a real regression from your import edits — fix it before committing.
 
-- [ ] **Step 10: Sync and commit**
+- [ ] **Step 9: Sync and commit**
 
 ```bash
 npm run sync-gs
-git add server/prescriptions.js server/actions.js scripts/sync-gs.mjs apps-script/Prescriptions.gs apps-script/Actions.gs tests/prescriptions.test.js tests/actions-write.test.js
+git add server/prescriptions.js server/actions.js scripts/sync-gs.mjs apps-script/Prescriptions.gs apps-script/Actions.gs tests/prescriptions.test.js
 git commit -m "feat: prescription input validation and the change engine that records every edit"
 ```
 
@@ -605,7 +602,7 @@ git commit -m "feat: prescription input validation and the change engine that re
 
 **Files:**
 - Modify: `server/actions.js` — register six actions
-- Test: `tests/actions-write.test.js`
+- Create: `tests/actions-write.test.js` — **this task creates it**, carrying Task 3's three `applyPrescriptionChange` tests (reproduced in Task 3 Step 6) plus every test below
 
 **Interfaces:**
 - Consumes: `applyPrescriptionChange`, `readPrescription`, `validateDoses`, `validateScheduleFields` (Task 3); `canEdit` from `js/access.js`; `sharingRows(ctx)`, `requireUser`, `AppError`, `str`, `stripRow`, `activeUsers` from `server/actions.js`.
@@ -613,7 +610,7 @@ git commit -m "feat: prescription input validation and the change engine that re
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `tests/actions-write.test.js`:
+Create `tests/actions-write.test.js`. Start it with the header and the three `applyPrescriptionChange` tests shown in Task 3 Step 6 (copy them verbatim — they are this task's to write), then append everything below into the same file.
 
 ```js
 // Refusals are tested against U02 as the owner. U01's Sharing row (SH01) already grants the
@@ -1169,7 +1166,7 @@ function medicineFields(fields) {
   // against everyone else, and a failed upload must leave nothing behind to clean up. The old
   // file is trashed last, by the URL the column actually held -- never by scanning the folder.
   uploadMedicinePhoto(req, ctx) {
-    requireUser(req, ctx);
+    const { user } = requireUser(req, ctx);
     const medicineId = str(req.medicineId);
     const slot = str(req.slot);
     if (!isPhotoSlot(slot)) throw new AppError("BAD_INPUT", "That isn't one of the photo slots.");
@@ -1184,7 +1181,7 @@ function medicineFields(fields) {
     const column = photoColumn(slot);
     const previous = ctx.lock(() => {
       const before = str((ctx.db.rows("Medicines").find(m => str(m.medicine_id) === medicineId) || {})[column]);
-      const patch = { updated_at: bangkokStamp(ctx.nowMs()), updated_by: requireUser(req, ctx).user.user_id };
+      const patch = { updated_at: bangkokStamp(ctx.nowMs()), updated_by: user.user_id };
       patch[column] = created.url;
       ctx.db.update("Medicines", "medicine_id", medicineId, patch);
       return before;
@@ -1338,48 +1335,36 @@ The one place the rejected mid-day behaviour can leak in.
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `tests/views-today.test.js`, following the render-and-assert-on-the-HTML style already used there:
+Append to `tests/views-today.test.js`. That file already defines a module-level `ctx` object and a `baseModel(over = {})` helper — **use those**; do not invent `todayModelWith` or `ctxFor`. Read the file's first 30 lines to see exactly what `baseModel` accepts, and pass the dose/tick overrides through it.
 
 ```js
 test("a ticked row shows the amount that was actually taken, not the amount now prescribed", () => {
-  const model = todayModelWith({
-    dose: { id: "DS01", timeOfDay: "Morning", amount: 0.5, unit: "tablet" },
-    tick: { at: "07:42", amount: "1", unit: "tablet" },
-  });
-  const html = renderToday({ model, ctx: ctxFor("U01"), date: "2026-09-18", today: "2026-09-18" });
+  const model = baseModel({ dose: { id: "DS01", timeOfDay: "Morning", amount: 0.5, unit: "tablet" }, tick: { at: "07:42", amount: "1", unit: "tablet" } });
+  const html = renderToday({ model, ctx, date: "2026-09-18", today: "2026-09-18" });
   assert.match(html, /1 tablet/, "the taken amount is what the record says");
   assert.doesNotMatch(html.split("</button>")[0], /0\.5 tablet(?![^<]*now)/);
 });
 
 test("a ticked row whose dose has since changed also says what it is now", () => {
-  const model = todayModelWith({
-    dose: { id: "DS01", timeOfDay: "Morning", amount: 0.5, unit: "tablet" },
-    tick: { at: "07:42", amount: "1", unit: "tablet" },
-  });
-  const html = renderToday({ model, ctx: ctxFor("U01"), date: "2026-09-18", today: "2026-09-18" });
+  const model = baseModel({ dose: { id: "DS01", timeOfDay: "Morning", amount: 0.5, unit: "tablet" }, tick: { at: "07:42", amount: "1", unit: "tablet" } });
+  const html = renderToday({ model, ctx, date: "2026-09-18", today: "2026-09-18" });
   assert.match(html, /now 0\.5 tablet/i);
 });
 
 test("an un-ticked row shows the current dose", () => {
-  const model = todayModelWith({
-    dose: { id: "DS01", timeOfDay: "Morning", amount: 0.5, unit: "tablet" },
-    tick: null,
-  });
-  const html = renderToday({ model, ctx: ctxFor("U01"), date: "2026-09-18", today: "2026-09-18" });
+  const model = baseModel({ dose: { id: "DS01", timeOfDay: "Morning", amount: 0.5, unit: "tablet" }, tick: null });
+  const html = renderToday({ model, ctx, date: "2026-09-18", today: "2026-09-18" });
   assert.match(html, /0\.5 tablet/);
 });
 
 test("a ticked row whose dose has not changed says nothing extra", () => {
-  const model = todayModelWith({
-    dose: { id: "DS01", timeOfDay: "Morning", amount: 1, unit: "tablet" },
-    tick: { at: "07:42", amount: "1", unit: "tablet" },
-  });
-  const html = renderToday({ model, ctx: ctxFor("U01"), date: "2026-09-18", today: "2026-09-18" });
+  const model = baseModel({ dose: { id: "DS01", timeOfDay: "Morning", amount: 1, unit: "tablet" }, tick: { at: "07:42", amount: "1", unit: "tablet" } });
+  const html = renderToday({ model, ctx, date: "2026-09-18", today: "2026-09-18" });
   assert.doesNotMatch(html, /now 1 tablet/i);
 });
 ```
 
-Read the existing tests in this file first and reuse their model-building helper; write `todayModelWith` as a thin wrapper over it if none fits.
+`baseModel` builds a whole Today model; if its override shape does not reach the individual dose item, widen `baseModel` itself rather than adding a second helper beside it.
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -1464,8 +1449,10 @@ Append to `tests/viewmodel-screens.test.js`:
 
 ```js
 test("canEditOwner reads the grant bootstrap already sent for each person", () => {
+  // indexBoot reads these eight arrays; bootFixture() does not exist, so build the object here.
   const idx = indexBoot({
-    ...bootFixture(),
+    today: "2026-09-18", dose_log: [], medicines: [], hospitals: [], doctors: [],
+    prescriptions: [], doses: [], changes: [],
     me: { user_id: "U02", display_name: "Pim", role: "Family" },
     people: [
       { user_id: "U01", display_name: "Dad", role: "Primary", medicines: "Edit", care_team: "View" },
