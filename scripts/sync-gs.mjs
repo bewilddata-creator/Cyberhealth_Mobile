@@ -8,6 +8,7 @@ export const FILES = [
   ["js/schedule.js", "Schedule.gs"],
   ["js/access.js", "Access.gs"],
   ["js/authcore.js", "AuthCore.gs"],
+  ["server/prescriptions.js", "Prescriptions.gs"],
   ["server/actions.js", "Actions.gs"],
   ["server/photos.js", "Photos.gs"],
 ];

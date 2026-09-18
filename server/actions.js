@@ -2,7 +2,8 @@
 // Synced to Apps Script by scripts/sync-gs.mjs, so keep imports on one line and names unique.
 import { isActiveUser, publicUser, SECTIONS, grantFor, canRead, readableOwners, canTick } from "../js/access.js";
 import { MAX_ATTEMPTS, SESSION_DAYS, makePasswordRecord, verifyPassword, passwordProblem, isResetCode, tokenHash } from "../js/authcore.js";
-import { normalizePrescription, normalizeDose, isDue, bangkokToday, bangkokTimeOfDay, bangkokStamp, addDays, parseDate, TIMES_OF_DAY, FREQ, DOSE_LOG_WINDOW_DAYS, dedupeActivePrescriptions } from "../js/schedule.js";
+import { normalizePrescription, normalizeDose, isDue, bangkokToday, bangkokTimeOfDay, bangkokStamp, addDays, parseDate, TIMES_OF_DAY, FREQ, DOSE_LOG_WINDOW_DAYS, dedupeActivePrescriptions, describeSchedule } from "../js/schedule.js";
+import { validateDoses, validateScheduleFields, MAX_REASON_LENGTH } from "../server/prescriptions.js";
 
 export class AppError extends Error {
   constructor(code, message) { super(message); this.code = code; }
@@ -203,6 +204,53 @@ function writeTaken(ctx, user, prescriptionId, date, timeOfDay, dose) {
     taken_at: bangkokStamp(ctx.nowMs()),
     taken_by: user.user_id,
   }));
+}
+
+// Reads a prescription and its dose rows in the normalized shape describeSchedule wants.
+function readPrescription(ctx, prescriptionId) {
+  const row = ctx.db.rows("Prescriptions").find(r => str(r.prescription_id) === prescriptionId);
+  if (!row) return null;
+  const norm = normalizePrescription(row);
+  if (!norm.ok) throw new AppError("BAD_INPUT", `This prescription has a problem in the Sheet: ${norm.reason}`);
+  const doses = ctx.db.rows("PrescriptionDoses")
+    .filter(d => str(d.prescription_id) === prescriptionId)
+    .map(normalizeDose)
+    .filter(d => d.ok)
+    .map(d => d.dose);
+  return { row, prescription: norm.prescription, doses };
+}
+
+// The ONLY way a prescription changes. Runs inside the script lock: reads the current state,
+// runs the caller's writes, reads it back, and appends one PrescriptionChanges row describing
+// the move in words. No action may write to Prescriptions or PrescriptionDoses except through
+// here, so history can never drift from what the rows actually say.
+function applyPrescriptionChange(ctx, user, prescriptionId, changeType, mutate, opts) {
+  const options = opts || {};
+  const start = readPrescription(ctx, prescriptionId);
+  if (!start) throw new AppError("BAD_INPUT", "That medicine isn't on the list any more. Refresh and try again.");
+  const before = changeType === "Started" ? "" : describeSchedule(start.prescription, start.doses);
+  mutate(start);
+  const end = readPrescription(ctx, prescriptionId);
+  if (!end) throw new AppError("SERVER", "Something went wrong on the server. Try again.");
+  const stamp = bangkokStamp(ctx.nowMs());
+  const doctorId = options.doctorId === undefined ? end.prescription.doctorId : str(options.doctorId);
+  ctx.db.update("Prescriptions", "prescription_id", prescriptionId, { updated_at: stamp, updated_by: user.user_id });
+  ctx.db.append("PrescriptionChanges", {
+    change_id: ctx.newId("CH"),
+    prescription_id: prescriptionId,
+    changed_at: stamp,
+    changed_by: user.user_id,
+    change_type: changeType,
+    doctor_id: doctorId,
+    reason: str(options.reason).slice(0, MAX_REASON_LENGTH),
+    before,
+    after: describeSchedule(end.prescription, end.doses),
+  });
+  // end.row is stale in production: SheetDb.update (apps-script/Data.gs) writes to the
+  // spreadsheet and does not mutate the object already read, unlike dev/memory-db.js's
+  // update() which patches the live object in place. Re-read so the phone gets the stamps.
+  const saved = ctx.db.rows("Prescriptions").find(r => str(r.prescription_id) === prescriptionId);
+  return { prescription: stripRow(saved), doses: end.doses };
 }
 
 // ---- Data actions ----
