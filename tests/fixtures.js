@@ -117,6 +117,10 @@ export function fakeCtx(tables = fixtureTables()) {
   const sessions = new Map(), attempts = new Map(), idSeq = new Map();
   let clock = NOW, seq = 0;
   const db = memoryDb(tables);
+  // The script lock is what stops two family members' writes clobbering each other, and it used
+  // to be untestable: `lock: fn => fn()` let an action that never took it pass every test. It is
+  // counted now, and tests/actions-lock.test.js asserts every write action takes it.
+  let locks = 0;
   return {
     db,
     sessions: {
@@ -136,8 +140,10 @@ export function fakeCtx(tables = fixtureTables()) {
       return `${prefix}-${String(n).padStart(6, "0")}`;
     },
     nowMs: () => clock,
-    lock: fn => fn(),
+    lock: fn => { locks++; return fn(); },
     setNow: ms => { clock = ms; },
+    // Test-only reader. Not part of the ctx interface server/actions.js may use.
+    locksTaken: () => locks,
   };
 }
 
