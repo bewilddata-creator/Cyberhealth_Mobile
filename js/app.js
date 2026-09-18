@@ -901,13 +901,17 @@ function stopPrescription(prescriptionId) {
   return actOnPrescription("stopPrescription", prescriptionId, `Stopped taking ${name}. It's in the Stopped list.`);
 }
 
-// The one thing in this release that cannot be undone, so the question names the medicine and
-// says why nothing is lost by removing it: Delete is only offered while no dose has ever been
-// ticked against it (detailModel's canDelete), and the server refuses again if one has.
+// Irreversible, so the question names the medicine and says what actually goes. Delete is only
+// offered while no dose has ever been ticked against it (detailModel's canDelete) and the server
+// refuses again if one has, so no record of a dose taken is ever at stake here -- but the
+// prescription's own history is: deletePrescription removes its PrescriptionChanges rows too, so
+// two dose adjustments made before deciding to remove it disappear with it. That is worth saying
+// out loud rather than calling it "nothing", in the same shape as the three library questions
+// below: what is deleted, then what is kept, then that it cannot be undone.
 function deletePrescription(prescriptionId) {
   const name = prescriptionName(prescriptionId);
   const who = ownerName();
-  const ask = `Remove ${name} from ${who ? `${who}'s` : "this"} list? Nothing has been ticked for it yet, so nothing is lost. This can't be undone.`;
+  const ask = `Remove ${name} from ${who ? `${who}'s` : "this"} list? Its schedule and every change recorded for it are deleted. Nothing has ever been ticked for it, so no record of a dose taken goes with it, and the medicine itself stays in the family's medicine list. This can't be undone.`;
   if (!confirm(ask)) return;
   return actOnPrescription("deletePrescription", prescriptionId, `${name} is off the list.`, () => {
     S.detail = null;
@@ -929,7 +933,7 @@ function deletePrescription(prescriptionId) {
 
 function deleteLibraryMedicine(medicineId) {
   const name = medicineNameOf(medicineId);
-  const ask = `Remove ${name} from the family's medicine list? Its details and any photos of it are deleted for everyone. Nobody takes it and nobody has taken it, so no one's medicine record changes. This can't be undone.`;
+  const ask = `Remove ${name} from the family's medicine list? Its details and any photos of it are deleted for everyone. Nobody takes it and nobody has taken it, so no one's record changes. This can't be undone.`;
   if (!confirm(ask)) return;
   return runAction("deleteMedicine", { medicineId },
     r => (r && r.warnings && r.warnings.length ? r.warnings[0] : `${name} is off the medicine list.`),

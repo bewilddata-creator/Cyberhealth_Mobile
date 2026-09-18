@@ -547,14 +547,20 @@ test("stopping and restarting say which medicine they did it to", async () => {
   assert.equal(world.ctx.db.rows("Prescriptions").find(r => r.prescription_id === "RX01").status, "Active");
 });
 
-test("delete names the medicine and says why nothing is lost, and saying no sends nothing", async () => {
+// F3: this one is release 2a code the family already has on their phones, and it used to say
+// "nothing is lost" -- while deletePrescription removes the prescription's PrescriptionChanges
+// rows, so every dose adjustment recorded before she decided to remove it goes too. Same shape as
+// the three library questions: what is deleted, then what is kept, then that it cannot be undone.
+test("delete names the medicine, says what goes and what stays, and saying no sends nothing", async () => {
   await fresh();
   confirmAnswer = false;
   await clickOn({ delete: "RX01" });
   assert.equal(confirms.length, 1);
   assert.match(confirms[0], /Amlodipine/);
   assert.match(confirms[0], /Dad's list/);
-  assert.match(confirms[0], /nothing is lost/);
+  assert.match(confirms[0], /every change recorded for it are deleted/, "the history goes too, so say so");
+  assert.match(confirms[0], /stays in the family's medicine list/, "and say what is kept");
+  assert.doesNotMatch(confirms[0], /nothing is lost|no record is lost/i, "something IS lost: the schedule and the history");
   assert.match(confirms[0], /can't be undone/);
   assert.equal(world.sent.length, 0);
   assert.ok(world.ctx.db.rows("Prescriptions").some(r => r.prescription_id === "RX01"));
