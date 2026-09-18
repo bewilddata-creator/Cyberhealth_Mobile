@@ -3,11 +3,10 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createHash, randomUUID } from "node:crypto";
 import vm from "node:vm";
 import { sync, FILES } from "../scripts/sync-gs.mjs";
 import { fixtureTables } from "./fixtures.js";
-import { fakeSpreadsheetApp } from "./gs-sheet-fake.js";
+import { fakeSpreadsheetApp, fakePropertiesService, fakeCacheService, fakeLockService, fakeUtilities, fakeContentService } from "./gs-sheet-fake.js";
 
 test("generated .gs files have no import/export", () => {
   const dir = mkdtempSync(join(tmpdir(), "gs-"));
@@ -39,60 +38,6 @@ test("every apps-script/*.gs file loads into one global scope without name clash
   assert.equal(vm.runInContext('handle({ action: "nope" }, {}).error.code', context), "BAD_INPUT");
   assert.equal(vm.runInContext("typeof SheetDb.rows", context), "function");
 });
-
-// ---- fake Google services, just enough of each to drive a real request end to end ----
-
-function fakePropertiesService() {
-  const store = new Map();
-  const service = {
-    getProperty: k => (store.has(k) ? store.get(k) : null),
-    setProperty: (k, v) => { store.set(k, v); },
-    deleteProperty: k => { store.delete(k); },
-    getProperties: () => Object.fromEntries(store),
-  };
-  return { getScriptProperties: () => service };
-}
-
-function fakeCacheService() {
-  const store = new Map();
-  const cache = {
-    get: k => (store.has(k) ? store.get(k) : null),
-    put: (k, v) => { store.set(k, v); },
-    remove: k => { store.delete(k); },
-  };
-  return { getScriptCache: () => cache };
-}
-
-const fakeLockService = { getScriptLock: () => ({ tryLock: () => true, releaseLock: () => {} }) };
-
-// Mimics Utilities.computeDigest's Java-signed byte arrays (-128..127): sha256Live_ in
-// Adapters.gs converts to that range before calling it, and back to unsigned (0..255) after.
-const fakeUtilities = {
-  DigestAlgorithm: { SHA_256: "SHA_256" },
-  computeDigest: (algorithm, bytes) => {
-    const unsigned = Buffer.from(bytes.map(b => b & 255));
-    const digest = createHash("sha256").update(unsigned).digest();
-    return Array.from(digest, b => (b > 127 ? b - 256 : b));
-  },
-  getUuid: () => randomUUID(),
-  base64Encode: input => Buffer.from(String(input), "utf8").toString("base64"),
-  formatDate: (date, timeZone, format) => {
-    const parts = new Intl.DateTimeFormat("en-CA", {
-      timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
-    }).formatToParts(date);
-    const get = t => parts.find(p => p.type === t).value;
-    const ymd = `${get("year")}-${get("month")}-${get("day")}`;
-    return format === "yyyy-MM-dd" ? ymd : `${ymd} ${get("hour")}:${get("minute")}`;
-  },
-};
-
-const fakeContentService = {
-  MimeType: { JSON: "JSON" },
-  createTextOutput: text => {
-    const out = { getContent: () => text, setMimeType: () => out };
-    return out;
-  },
-};
 
 test("Data.gs formats Date cells: datetime columns to the minute, date-only columns to the day, both in Asia/Bangkok", () => {
   const context = loadGs();

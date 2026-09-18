@@ -1,8 +1,10 @@
-// A fake SpreadsheetApp backed by plain-object tables (the same shape tests/fixtures.js
-// builds), for driving apps-script/*.gs (Data.gs, CheckSheet.gs) inside a node:vm context
-// without a real Google Sheet. Cells round-trip as whatever value you put in (string, number,
-// boolean or a real Date), same as GAS: getValues() returns it as-is, getDisplayValues()
-// stringifies it -- callers that need to see a Date formatted should also pass a display grid.
+// Fake Google services, just enough of each to drive the real apps-script/*.gs files inside a
+// node:vm context: a SpreadsheetApp backed by plain-object tables (the same shape
+// tests/fixtures.js builds), plus Drive, Properties, Cache, Lock, Utilities and Content.
+// Cells round-trip as whatever value you put in (string, number, boolean or a real Date), same
+// as GAS: getValues() returns it as-is, getDisplayValues() stringifies it -- callers that need
+// to see a Date formatted should also pass a display grid.
+import { createHash, randomUUID } from "node:crypto";
 
 function buildGrid(columns, rows) {
   return [columns.slice()].concat(rows.map(r => columns.map(c => (r[c] == null ? "" : r[c]))));
@@ -66,5 +68,130 @@ export function fakeSpreadsheetApp(tables, columnsByTab, padRowsByTab) {
     getActive: () => ({
       getSheetByName: name => sheets.get(name) || null,
     }),
+  };
+}
+
+// ---- the other Google services apps-script/*.gs reaches for ----
+
+export function fakePropertiesService() {
+  const store = new Map();
+  const service = {
+    getProperty: k => (store.has(k) ? store.get(k) : null),
+    setProperty: (k, v) => { store.set(k, v); },
+    deleteProperty: k => { store.delete(k); },
+    getProperties: () => Object.fromEntries(store),
+  };
+  return { getScriptProperties: () => service };
+}
+
+export function fakeCacheService() {
+  const store = new Map();
+  const cache = {
+    get: k => (store.has(k) ? store.get(k) : null),
+    put: (k, v) => { store.set(k, v); },
+    remove: k => { store.delete(k); },
+  };
+  return { getScriptCache: () => cache };
+}
+
+export const fakeLockService = { getScriptLock: () => ({ tryLock: () => true, releaseLock: () => {} }) };
+
+// Mimics Utilities.computeDigest's Java-signed byte arrays (-128..127): sha256Live_ in
+// Adapters.gs converts to that range before calling it, and back to unsigned (0..255) after.
+// base64Decode returns the same signed Byte[] GAS returns, and newBlob just remembers what it
+// was handed, which is all DriveStore.putImage (apps-script/Drive.gs) does with it.
+export const fakeUtilities = {
+  DigestAlgorithm: { SHA_256: "SHA_256" },
+  computeDigest: (algorithm, bytes) => {
+    const unsigned = Buffer.from(bytes.map(b => b & 255));
+    const digest = createHash("sha256").update(unsigned).digest();
+    return Array.from(digest, b => (b > 127 ? b - 256 : b));
+  },
+  getUuid: () => randomUUID(),
+  base64Encode: input => Buffer.from(String(input), "utf8").toString("base64"),
+  base64Decode: text => Array.from(Buffer.from(String(text), "base64"), b => (b > 127 ? b - 256 : b)),
+  newBlob: (bytes, contentType, name) => ({
+    getBytes: () => bytes,
+    getContentType: () => contentType,
+    getName: () => name,
+  }),
+  formatDate: (date, timeZone, format) => {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
+    }).formatToParts(date);
+    const get = t => parts.find(p => p.type === t).value;
+    const ymd = `${get("year")}-${get("month")}-${get("day")}`;
+    return format === "yyyy-MM-dd" ? ymd : `${ymd} ${get("hour")}:${get("minute")}`;
+  },
+};
+
+export const fakeContentService = {
+  MimeType: { JSON: "JSON" },
+  createTextOutput: text => {
+    const out = { getContent: () => text, setMimeType: () => out };
+    return out;
+  },
+};
+
+// A fake DriveApp with one root folder, whose id is the value the Settings tab's
+// photo_folder_id holds ("SAMPLE_FOLDER_ID" in tests/fixtures.js). Folders and files are kept
+// on the returned object (.folders, .files) so a test can see exactly what was created,
+// shared and trashed. Only the calls apps-script/Drive.gs makes are implemented.
+export function fakeDriveApp(rootId = "SAMPLE_FOLDER_ID") {
+  const folders = new Map();
+  const files = new Map();
+  let seq = 0;
+  // A real Drive id is a long opaque string, and DriveStore.trashByUrl (apps-script/Drive.gs)
+  // only recognises one of 10 characters or more inside a URL -- a short fake id would make
+  // every "trash the old photo" path quietly report a warning instead of trashing anything.
+  const driveId = (kind, n) => `${kind}${n}_0Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op8Qr`;
+
+  function makeFolder(id, name, parentId) {
+    const folder = {
+      id, name, parentId,
+      getId: () => id,
+      getName: () => name,
+      getFoldersByName(childName) {
+        const hits = [...folders.values()].filter(f => f.parentId === id && f.name === childName);
+        let i = 0;
+        return { hasNext: () => i < hits.length, next: () => hits[i++] };
+      },
+      createFolder(childName) {
+        const child = makeFolder(driveId("FOLDER", ++seq), childName, id);
+        folders.set(child.id, child);
+        return child;
+      },
+      createFile(blob) {
+        const fileId = driveId("FILE", ++seq);
+        const file = {
+          id: fileId, folderId: id, blob, trashed: false, sharing: null,
+          getId: () => fileId,
+          getName: () => blob.getName(),
+          setSharing: (access, permission) => { file.sharing = [access, permission]; return file; },
+          setTrashed: value => { file.trashed = value; return file; },
+        };
+        files.set(fileId, file);
+        return file;
+      },
+    };
+    return folder;
+  }
+
+  folders.set(rootId, makeFolder(rootId, "CyberHealth photos", null));
+  return {
+    folders,
+    files,
+    Access: { ANYONE_WITH_LINK: "ANYONE_WITH_LINK" },
+    Permission: { VIEW: "VIEW" },
+    getFolderById(id) {
+      const folder = folders.get(id);
+      if (!folder) throw new Error(`fake Drive: no folder with id ${id}`); // same shape as DriveApp: it throws, it does not return null
+      return folder;
+    },
+    getFileById(id) {
+      const file = files.get(id);
+      if (!file) throw new Error(`fake Drive: no file with id ${id}`);
+      return file;
+    },
   };
 }
