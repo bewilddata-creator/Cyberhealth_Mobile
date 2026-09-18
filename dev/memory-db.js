@@ -12,6 +12,14 @@
 //     both sides, so nothing an action can observe depends on the difference.
 //   * The real sheet has one fixed header row; this fake takes it from tables.__columns (what
 //     every fixture declares) and only falls back to the first row's keys when it is absent.
+//   * cellToString_ returns a cell's DISPLAY value -- what the spreadsheet shows after the
+//     cell's number format -- so a numeric cell formatted with a thousands separator reads back
+//     as "1,000" while its underlying value is 1000. A cell here is a single stored value with
+//     no format attached, so this fake returns String(value) for it. Nothing the app writes can
+//     drift: append and update both set the number format to "@" (plain text), where display
+//     and value are the same string. Only a number a person typed into the Sheet by hand, into
+//     a column the app only ever reads, could differ -- and every such column is read through
+//     Number()/String() anyway.
 import { AppError } from "../server/actions.js";
 
 // Timestamp columns, exactly as DATETIME_COLS_ in apps-script/Data.gs.

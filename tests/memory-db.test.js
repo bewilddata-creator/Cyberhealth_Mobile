@@ -86,6 +86,24 @@ test("rows() fills in every declared column of the tab, even one the row never s
   assert.deepEqual(db.rows("Medicines"), [{ _row: 2, medicine_id: "MED01", generic_name: "", photo_box: "" }]);
 });
 
+test("the declared columns are the whole tab: a key they do not name is not a cell at all", () => {
+  // The real headers_() reads row 1 and nothing else, so a value under a name that is not a
+  // header simply does not exist on the Sheet -- it cannot be read back, and writing one is
+  // refused rather than silently dropped.
+  const db = memoryDb({
+    __columns: { Medicines: ["medicine_id", "generic_name"] },
+    Medicines: [{ medicine_id: "MED01", generic_name: "Amlodipine", nickname: "the white one" }],
+  });
+  assert.deepEqual(db.rows("Medicines"), [{ _row: 2, medicine_id: "MED01", generic_name: "Amlodipine" }]);
+  assert.throws(() => db.append("Medicines", { medicine_id: "MED02", nickname: "x" }), {
+    message: 'The Medicines tab is missing the "nickname" column.',
+  });
+  // ...and a row that holds only undeclared keys is a blank row, exactly as it would look on a
+  // Sheet that has no such column.
+  const spacer = memoryDb({ __columns: { Medicines: ["medicine_id"] }, Medicines: [{ nickname: "the white one" }] });
+  assert.deepEqual(spacer.rows("Medicines"), []);
+});
+
 test("append writes every column of the row as text, blank where the caller sent nothing", () => {
   const tables = { __columns: { Medicines: ["medicine_id", "generic_name", "strength"] }, Medicines: [] };
   const db = memoryDb(tables);
