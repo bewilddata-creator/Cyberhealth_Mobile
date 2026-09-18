@@ -9,6 +9,7 @@
 import { esc } from "../html.js";
 import { I } from "../icons.js";
 import { TIMES_OF_DAY, FREQ, WEEKDAYS, MEDICINE_FORMS, unitForMedicineForm, pluralUnit, medicineNameParts } from "../schedule.js";
+import { deleteBlock } from "./common.js";
 
 // The exact strings the Sheet and server accept, paired with what the family reads.
 const FREQ_LABELS = [
@@ -161,23 +162,6 @@ function doctorPhotoBlock(model) {
       </div></div></div>`;
 }
 
-// Removing a doctor or a hospital lives here, at the bottom of the screen that opens it, and
-// never on the scrolling list -- the same rule the prescription screens follow, and for the same
-// reason: a destructive control beside a row a thumb is already moving past is a mis-tap waiting
-// to happen. It sits outside the <form> so it can never be confused for Save, under a rule and
-// its own heading.
-//
-// It renders only when the model says canDelete. The server refuses to remove anything still
-// pointed at, and a button that always fails is worse than no button -- so when it can't be
-// removed, the screen says what is holding it instead of offering to try.
-function deleteBlock({ canDelete, attr, id, label, why }) {
-  if (!id) return "";
-  return `<div class="dangerzone"><span class="dash">Removing this</span>
-    ${canDelete
-      ? `<button type="button" class="primary light danger" ${attr}="${val(id)}">${esc(label)}</button>`
-      : `<p class="sub">${esc(why)}</p>`}</div>`;
-}
-
 function hospitalChecks(model) {
   const hospitals = model.hospitals || [];
   const picked = (model.hospitalIds || []).map(String);
@@ -217,7 +201,7 @@ export function renderDoctorForm({ model, error, busy }) {
       ${saveButton(busy, editing ? "Save changes" : "Add this doctor")}
     </form>
     ${deleteBlock({
-      canDelete: !!m.canDelete,
+      canDelete: m.canDelete,
       attr: "data-delete-doctor",
       id: m.doctorId || doctor.doctor_id || "",
       label: "Delete this doctor",
@@ -233,7 +217,7 @@ const HOSPITAL_FIELDS_FORM = [
   ["name", "Name of the hospital or clinic", "text", true],
   ["phone", "Phone number (optional)", "tel", false],
   ["address", "Address (optional)", "textarea", false],
-  ["map_link", "Link to it on a map, if you have one (optional)", "url", false],
+  ["map_link", "Link to it on a map, if you have one (optional)", "text", false],
   ["notes", "Anything else worth remembering (optional)", "textarea", false],
 ];
 
@@ -254,7 +238,7 @@ export function renderHospitalForm({ model, error, busy }) {
       ${saveButton(busy, editing ? "Save changes" : "Add this place")}
     </form>
     ${deleteBlock({
-      canDelete: !!m.canDelete,
+      canDelete: m.canDelete,
       attr: "data-delete-hospital",
       id: m.hospitalId || hospital.hospital_id || "",
       label: "Delete this place",

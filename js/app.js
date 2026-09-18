@@ -456,6 +456,22 @@ function leaveForm(screen, message) {
   if (message) announce(message);
 }
 
+// A form is never somewhere to come back to: leaving one has to land on a screen that shows
+// something.
+const NOT_A_RETURN = new Set(["medicineForm", "prescriptionForm", "doseForm", "scheduleForm", "emergencyEdit"]);
+
+// Where a form goes when it closes: back to the screen it was opened from. This used to be the
+// literal "detail", which was right while the prescription detail was the only screen with an
+// Edit button on it -- the medicine library's detail has one too, and from there a hard-coded
+// "detail" dropped the family on the prescription detail for whatever was last selected, or on
+// Meds when nothing was. A screen that cannot be drawn right now (a detail with nothing
+// selected, or one Task 6 has not registered yet) still falls back to the list.
+function formReturnScreen() {
+  const from = S.formFrom;
+  if (from === "detail") return S.detail ? "detail" : "meds";
+  return from && SCREENS[from] && !NOT_A_RETURN.has(from) ? from : "meds";
+}
+
 // After a write, whether there is still a logged-in app to go back to. A reload that fails with
 // AUTH_REQUIRED nulls S.boot and shows the login screen; carrying on from there would set
 // S.screen back to an app screen, and view() renders a bare spinner when S.boot is null -- so the
@@ -498,7 +514,9 @@ function openScheduleForm(prescriptionId) {
 function openMedicineForm(medicineId) {
   const med = S.idx.medicines.get(medicineId);
   if (!med) return toast("That medicine isn't in the list any more. Tap Refresh on the More tab.");
-  openForm("medicineForm", "detail", { medicine: { ...med } });
+  // Where Edit was tapped, so Save and Cancel come back to the same screen -- the prescription
+  // detail and the medicine library detail both carry this button.
+  openForm("medicineForm", S.screen, { medicine: { ...med } });
 }
 // "It's not in the list -- add it", from inside the half-filled prescription form. The partly
 // filled prescription is stashed first and comes back with the new medicine already chosen: the
@@ -549,7 +567,7 @@ function saveMedicine(form) {
         ? `${saved.generic_name} is saved.`
         : `${saved.generic_name} is in the list now, and chosen below.`);
     }
-    leaveForm(S.formFrom === "detail" && S.detail ? "detail" : "meds", editing ? "Saved." : `${saved.generic_name} is in the medicine list.`);
+    leaveForm(formReturnScreen(), editing ? "Saved." : `${saved.generic_name} is in the medicine list.`);
   });
 }
 
@@ -757,7 +775,7 @@ function cancelForm() {
     Object.assign(S, { form: S.formStash, formStash: null, formError: "", formBusy: false, formDirty: true, formFrom: "meds", screen: "prescriptionForm" });
     return render();
   }
-  leaveForm(S.formFrom === "detail" && S.detail ? "detail" : "meds", "");
+  leaveForm(formReturnScreen(), "");
 }
 
 root.addEventListener("click", e => {

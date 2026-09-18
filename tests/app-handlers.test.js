@@ -133,7 +133,7 @@ globalThis.fetch = async (url, opts) => {
 
 // js/main.js is imported for its own sake: it registers the four form screens, so every test
 // below also renders them through the real renderers on the real models.
-const { S, loadBoot, render, formModel, splitPhotoTarget } = await import("../js/app.js");
+const { S, SCREENS, loadBoot, render, formModel, splitPhotoTarget } = await import("../js/app.js");
 await import("../js/main.js");
 
 function newWorld() {
@@ -904,6 +904,66 @@ test("every editing button on the Meds and detail screens is matched by the clic
     await clickOn(dataset);
     assert.equal(S.screen, screen);
   }
+});
+
+// ---- Edit details comes back where it was tapped ----
+//
+// data-edit-medicine is on two screens now: the prescription detail, and the medicine library's
+// own detail (Task 5). The return screen used to be the literal string "detail", so tapping Edit
+// on the library screen and then saving -- or backing out -- dropped the family on the
+// prescription detail for whatever happened to be selected, or on Meds when nothing was. They
+// tapped Edit on one screen and landed on an unrelated one, which only ever shows up in a
+// browser.
+
+test("Edit details goes back to the screen it was tapped on, not always the prescription detail", async () => {
+  await fresh();
+  // Stand in for the medicine library detail Task 6 registers; the point is that it is not
+  // "detail", and that leaving the form lands back on it.
+  SCREENS.medicineLibraryDetail = () => ({ tab: "more", body: "<p>the medicine library detail</p>" });
+  S.detail = null;
+  S.screen = "medicineLibraryDetail";
+
+  await clickOn({ editMedicine: "MED01" });
+  assert.equal(S.screen, "medicineForm");
+  assert.equal(S.formFrom, "medicineLibraryDetail", "the form remembers where Edit was tapped");
+
+  confirmAnswer = true;
+  await clickOn({ cancel: "" });
+  assert.equal(S.screen, "medicineLibraryDetail", "backing out returns to the library detail, not the prescription detail");
+
+  // And saving from there lands back on it too, not on Meds.
+  await clickOn({ editMedicine: "MED01" });
+  await submitOf(makeForm("medicine", [
+    field("medicineId", "MED01"),
+    field("generic_name", "Amlodipine"), field("brand_name", "Norvasc"), field("strength", "5 mg"),
+    field("form", "Tablet"), field("purpose", "Blood pressure"), field("notes", ""),
+  ]));
+  assert.equal(S.screen, "medicineLibraryDetail");
+  delete SCREENS.medicineLibraryDetail;
+});
+
+test("Edit details tapped on the prescription detail still goes back to the prescription detail", async () => {
+  await fresh();
+  S.detail = "RX01";
+  S.screen = "detail";
+  await clickOn({ editMedicine: "MED01" });
+  assert.equal(S.formFrom, "detail");
+  confirmAnswer = true;
+  await clickOn({ cancel: "" });
+  assert.equal(S.screen, "detail");
+});
+
+// A screen that cannot be drawn is never somewhere to land: a prescription detail with nothing
+// selected, and a screen nobody has registered, both fall back to the medicine list.
+test("leaving a form falls back to Meds when the screen it came from can't be shown", async () => {
+  await fresh();
+  S.detail = null;
+  S.screen = "aScreenNobodyRegistered";
+  await clickOn({ editMedicine: "MED01" });
+  assert.equal(S.formFrom, "aScreenNobodyRegistered");
+  confirmAnswer = true;
+  await clickOn({ cancel: "" });
+  assert.equal(S.screen, "meds");
 });
 
 // ---- he stops typing the unit ----

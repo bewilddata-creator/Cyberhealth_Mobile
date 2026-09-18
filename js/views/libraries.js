@@ -10,7 +10,7 @@
 import { esc } from "../html.js";
 import { I } from "../icons.js";
 import { pluralUnit } from "../schedule.js";
-import { doctorThumb } from "./common.js";
+import { doctorThumb, deleteBlock } from "./common.js";
 
 function matches(text, query) {
   const q = String(query == null ? "" : query).trim().toLowerCase();
@@ -169,11 +169,17 @@ export function renderMedicineLibraryDetail({ model, photo }) {
     ${facts ? `<div class="card"><span class="dash">Details</span><dl class="kv">${facts}</dl></div>` : ""}
     <div class="formbtns">
       <button type="button" class="primary light" data-edit-medicine="${esc(medicineId)}">Edit details</button>
-      ${canDelete
-        ? `<button type="button" class="primary light danger" data-delete-medicine="${esc(medicineId)}">Delete this medicine</button>`
-        : `<p class="note">This one can't be deleted: it's named by a medicine someone takes, or used to take, and deleting it would leave a hole in the record.</p>`}
     </div>
-    ${medicineId ? photoSlots(shots, medicineId) : ""}`;
+    ${medicineId ? photoSlots(shots, medicineId) : ""}
+    ${deleteBlock({
+      canDelete,
+      attr: "data-delete-medicine",
+      id: medicineId,
+      label: "Delete this medicine",
+      // This is the one screen a medicine is ever deleted from, so it gets the same rule and
+      // heading the doctor and hospital forms do -- not a red-lettered pill 8px under Edit.
+      why: "This medicine can't be removed while somebody takes it, or used to take it — the older records would stop reading right.",
+    })}`;
 }
 
 // ---- doctors ----
@@ -210,7 +216,7 @@ export function renderHospitalLibrary({ model, query }) {
     const doctors = (r.doctorNames || []).length ? `Doctors here: ${(r.doctorNames || []).join(", ")}` : "";
     return libraryRow(
       "data-open-hospital", hospital.hospital_id || "",
-      `<span class="thumb" aria-hidden="true">${I.team}</span>
+      `<span class="thumb" aria-hidden="true"></span>
         <div><div class="name">${esc(hospital.name || "Unknown hospital")}</div>
           <div class="s">${esc(hospital.phone || "No phone number saved yet")}</div>
           ${doctors ? `<div class="s">${esc(doctors)}</div>` : ""}</div>`

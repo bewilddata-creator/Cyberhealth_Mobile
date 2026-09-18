@@ -49,6 +49,24 @@ export function ownerSwitch(ctx) {
   return `<select class="pill-select" data-owner aria-label="Whose records to show">${options.map(p =>
     `<option value="${esc(p.user_id)}" ${p.user_id === ctx.owner ? "selected" : ""}>${p.user_id === ctx.me.user_id ? "Me" : esc(p.display_name)}</option>`).join("")}</select>`;
 }
+// Removing something from one of the family's shared lists. It lives at the foot of the screen
+// that opens the thing -- never on a scrolling list, where a thumb already moving past a row
+// would find it -- under a rule and a heading of its own, so it is never taken for Save.
+//
+// Three states, because "we don't know" is not the same as "no":
+//   canDelete === true   the server would allow it, so offer the button;
+//   canDelete === false  it would refuse, so say what is holding the row instead of offering a
+//                        button that always fails;
+//   anything else        nobody has worked it out (a caller that forgot to pass it) -- say
+//                        nothing at all rather than assert a reason that may not be true.
+export function deleteBlock({ canDelete, attr, id, label, why }) {
+  if (!id || canDelete == null) return "";
+  return `<div class="dangerzone"><span class="dash">Removing this</span>
+    ${canDelete
+      ? `<button type="button" class="primary light danger" ${attr}="${esc(id)}">${esc(label)}</button>`
+      : `<p class="sub">${esc(why)}</p>`}</div>`;
+}
+
 export function callLink(phone, name) {
   const href = telHref(phone);
   return href ? `<a class="callbtn" href="${esc(href)}" aria-label="Call ${esc(name)}">${I.phone}</a>` : "";

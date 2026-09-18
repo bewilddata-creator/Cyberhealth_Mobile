@@ -142,12 +142,17 @@ test("renderMedicineLibraryDetail shows who takes it, the unit its form implies,
 test("renderMedicineLibraryDetail hides Delete, and says why, while something still names the medicine", () => {
   const html = renderMedicineLibraryDetail({ model: detailModel({ canDelete: false }), photo: 0 });
   assert.ok(!html.includes("data-delete-medicine"), html);
-  assert.ok(html.includes("can't be deleted"));
+  assert.ok(html.includes("can&#39;t be removed while somebody takes it"));
 });
 
-test("renderMedicineLibraryDetail offers Delete when nothing names the medicine", () => {
+// The one screen a medicine is ever deleted from gets the same ruled-off section the doctor and
+// hospital forms do -- not a red-lettered pill 8px under Edit details.
+test("renderMedicineLibraryDetail offers Delete in its own ruled-off section, well clear of Edit details", () => {
   const html = renderMedicineLibraryDetail({ model: detailModel({ canDelete: true }), photo: 0 });
-  assert.ok(html.includes(`<button type="button" class="primary light danger" data-delete-medicine="MED01">Delete this medicine</button>`), html);
+  assert.ok(html.includes(`<div class="dangerzone"><span class="dash">Removing this</span>`), html);
+  assert.ok(html.includes(`<button type="button" class="primary light danger" data-delete-medicine="MED01">Delete this medicine</button>`));
+  assert.ok(!html.includes(`data-edit-medicine="MED01">Edit details</button>\n      <button`), "Delete must not sit inside the same button group as Edit");
+  assert.ok(html.indexOf("data-delete-medicine") > html.indexOf("dangerzone"), "the Delete is inside the ruled-off section");
 });
 
 test("renderMedicineLibraryDetail explains a medicine kept only because it was taken before", () => {
@@ -350,6 +355,27 @@ test("renderDoctorForm offers no Delete at all, and says what is holding the doc
   const html = renderDoctorForm({ model: doctorFormModel({ canDelete: false }), error: "", busy: false });
   assert.ok(!html.includes("data-delete-doctor"), html);
   assert.ok(html.includes("can&#39;t be removed while they&#39;re named on a medicine somebody takes"), html);
+});
+
+// "Nobody worked it out" is not "the server said no". A model that arrives without canDelete --
+// a caller that forgot to pass it -- must not go on to assert a specific reason the doctor can't
+// be removed, because that reason may simply not be true.
+test("renderDoctorForm claims no reason at all when canDelete was never worked out", () => {
+  for (const missing of [{}, { canDelete: undefined }, { canDelete: null }]) {
+    const html = renderDoctorForm({ model: doctorFormModel(missing), error: "", busy: false });
+    assert.ok(!html.includes("data-delete-doctor"), "no button it cannot stand behind");
+    assert.ok(!html.includes("can&#39;t be removed while"), `must not state a reason it doesn't know: ${JSON.stringify(missing)}`);
+    assert.ok(!html.includes("dangerzone"), "no Removing-this section at all");
+  }
+});
+
+test("renderHospitalForm claims no reason at all when canDelete was never worked out", () => {
+  for (const missing of [{}, { canDelete: undefined }, { canDelete: null }]) {
+    const html = renderHospitalForm({ model: hospitalFormModel(missing), error: "", busy: false });
+    assert.ok(!html.includes("data-delete-hospital"));
+    assert.ok(!html.includes("can&#39;t be removed while"), `must not state a reason it doesn't know: ${JSON.stringify(missing)}`);
+    assert.ok(!html.includes("dangerzone"));
+  }
 });
 
 test("renderDoctorForm offers no Delete on a doctor that has not been saved yet", () => {
