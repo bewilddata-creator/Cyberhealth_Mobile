@@ -300,16 +300,11 @@ button.banner.warn{background:var(--yellow-2)}
 .listbtn small{display:block;color:var(--ink-2);font-size:14px}
 .listbtn .go{width:44px;height:44px;border-radius:50%;background:var(--paper);display:grid;place-items:center;flex:none}
 .listbtn .go svg{width:16px;height:16px}
-/* A row and its Delete sit side by side -- two buttons, never a button inside a button. Below
-   360px (288px of content) the Delete drops underneath instead of squeezing the medicine's name
-   down to a couple of letters per line. */
-.libraryrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center}
-@media (max-width:359px){.libraryrow{grid-template-columns:minmax(0,1fr)}.libraryrow .rowdelete{justify-self:end}}
-/* 44px in BOTH directions: min-width as well as min-height, so a short word can never shrink the
-   target to something he has to aim at. */
-.rowdelete{border:1.5px dashed var(--ink-3);background:var(--paper);color:var(--alert);border-radius:999px;padding:0 14px;
-  font-weight:700;font-size:14px;min-height:44px;min-width:44px;white-space:nowrap}
-.libraryrow .medrow .spec{margin-top:4px}
+.medrow .spec{margin-top:4px}
+/* Removing a doctor or a place: below the form, under a rule of its own, so the eye never takes
+   it for Save. Full width and 16px of padding, so it clears 44px in both directions on a 320px
+   phone as easily as on a 390px one. */
+.dangerzone{display:grid;gap:10px;margin-top:6px;padding-top:14px;border-top:1.5px dashed var(--line)}
 /* One hospital per line on the doctor form, the whole 48px line tappable, not just the box. */
 .checklist{display:grid;gap:6px}
 .checkrow{display:flex;align-items:center;gap:12px;background:var(--sand);border:1.5px dashed var(--ink-3);border-radius:16px;

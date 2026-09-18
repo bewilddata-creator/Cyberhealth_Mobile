@@ -12,18 +12,6 @@ import { I } from "../icons.js";
 import { pluralUnit } from "../schedule.js";
 import { doctorThumb } from "./common.js";
 
-// medicineLibraryDetail gives each photo a label but not the server's slot name, and the slot is
-// what uploadMedicinePhoto / removeMedicinePhoto take. Mapped by label rather than by position so
-// a reordered list cannot quietly point "Box" at the pill photo; a label with no slot renders no
-// buttons at all, which is better than a button that sends a blank slot.
-const SLOT_BY_LABEL = {
-  "Box": "box",
-  "Packet front": "packet_front",
-  "Packet back": "packet_back",
-  "Pill front": "pill_front",
-  "Pill back": "pill_back",
-};
-
 function matches(text, query) {
   const q = String(query == null ? "" : query).trim().toLowerCase();
   if (!q) return true;
@@ -64,20 +52,18 @@ function emptyList(total, query, addLabel) {
     : `<p class="none">Nothing here matches “${esc(String(query || "").trim())}”.</p>`;
 }
 
-// Why some rows offer Delete and others do not, said once at the foot of every list instead of
-// on every row. The server refuses a delete that would leave a prescription or a dose log naming
-// something that no longer exists, so the row stays and the history keeps reading.
-const KEEP_NOTE = `<p class="note">Anything still being used stays in the list. Delete only shows on rows nothing else points at.</p>`;
+// Where removing something lives, said once at the foot of the list. Deliberately NOT a Delete
+// button on the row: this is a list he scrolls with a thumb, sometimes without his glasses, and
+// a destructive control beside a moving row is a mis-tap waiting to happen. The app already
+// settled this -- the Meds list has no Delete either, the prescription detail does. So you open
+// the thing first, and remove it from there.
+const KEEP_NOTE = `<p class="note">Tap anything here to see it or change it. Removing it happens there too — and only when nothing else still uses it, so the family's records keep reading.</p>`;
 
-// A row is a tap target that opens the thing, with Delete beside it when the model says the
-// server would allow one. They are two buttons side by side, never a button inside a button.
-function libraryRow(openAttr, id, inner, deleteAttr, deleteWhat) {
-  const del = deleteAttr
-    ? `<button type="button" class="rowdelete" ${deleteAttr}="${esc(id)}" aria-label="Delete ${esc(deleteWhat)}">Delete</button>`
-    : "";
-  return `<div class="libraryrow">
-    <button type="button" class="medrow" ${openAttr}="${esc(id)}">${inner}
-      <span class="go">${I.arrow}</span></button>${del}</div>`;
+// A row is one tap target that opens the thing. Nothing else: no second control to catch a
+// thumb on the way past.
+function libraryRow(openAttr, id, inner) {
+  return `<button type="button" class="medrow" ${openAttr}="${esc(id)}">${inner}
+    <span class="go">${I.arrow}</span></button>`;
 }
 
 function medicineThumb(url) {
@@ -109,8 +95,7 @@ export function renderMedicineLibrary({ model, query }) {
     "data-open-medicine", r.medicine ? r.medicine.medicine_id : "",
     `${medicineThumb(r.photoUrl)}
       <div><div class="name">${medicineName(r.name, r.strength)}</div>
-        <div class="s">${whoTakesIt(r.takenBy, r.takenBefore)}</div></div>`,
-    r.canDelete ? "data-delete-medicine" : "", r.name || "this medicine"
+        <div class="s">${whoTakesIt(r.takenBy, r.takenBefore)}</div></div>`
   )).join("");
   return `${topBar("The family's lists")}
     <div><h1 class="big">Medicines</h1><p class="sub">${esc(countLine(rows.length, "medicine", "medicines", "the family keeps track of"))}</p></div>
@@ -127,7 +112,10 @@ export function renderMedicineLibrary({ model, query }) {
 // already work on the prescription screen work here unchanged.
 function photoSlots(photos, medicineId) {
   const rows = photos.map(p => {
-    const slot = p.slot || SLOT_BY_LABEL[p.label] || "";
+    // The slot comes from the model, which takes it from PHOTO_FIELDS beside the label. The view
+    // never derives one from the label: a label is presentation, somebody will reword it, and a
+    // slot derived from "Packet front" would stop matching the day they do.
+    const slot = p.slot || "";
     const buttons = slot
       ? `<div class="btnrow">
           <button type="button" data-upload-photo="${esc(medicineId)}|${esc(slot)}">${p.url ? "Replace" : "Add photo"}</button>
@@ -201,8 +189,7 @@ export function renderDoctorLibrary({ model, query }) {
       `${doctorThumb(doctor, r.photoUrl)}
         <div><div class="name">${esc(doctor.name || "Unknown doctor")}</div>
           ${doctor.specialty ? `<span class="spec">${esc(doctor.specialty)}</span>` : ""}
-          ${where ? `<div class="s">${esc(where)}</div>` : ""}</div>`,
-      r.canDelete ? "data-delete-doctor" : "", doctor.name || "this doctor"
+          ${where ? `<div class="s">${esc(where)}</div>` : ""}</div>`
     );
   }).join("");
   return `${topBar("The family's lists")}
@@ -226,8 +213,7 @@ export function renderHospitalLibrary({ model, query }) {
       `<span class="thumb" aria-hidden="true">${I.team}</span>
         <div><div class="name">${esc(hospital.name || "Unknown hospital")}</div>
           <div class="s">${esc(hospital.phone || "No phone number saved yet")}</div>
-          ${doctors ? `<div class="s">${esc(doctors)}</div>` : ""}</div>`,
-      r.canDelete ? "data-delete-hospital" : "", hospital.name || "this hospital"
+          ${doctors ? `<div class="s">${esc(doctors)}</div>` : ""}</div>`
     );
   }).join("");
   return `${topBar("The family's lists")}

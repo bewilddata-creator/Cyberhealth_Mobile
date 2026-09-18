@@ -7,12 +7,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { renderMedicineLibrary, renderMedicineLibraryDetail, renderDoctorLibrary, renderHospitalLibrary } from "../js/views/libraries.js";
 import { renderDoctorForm, renderHospitalForm } from "../js/views/forms.js";
-import { indexBoot, medicineLibraryModel, doctorLibraryModel, hospitalLibraryModel } from "../js/viewmodel.js";
+import { indexBoot, medicineLibraryModel, medicineLibraryDetail, doctorLibraryModel, hospitalLibraryModel } from "../js/viewmodel.js";
 
 const openMedicine = id => `<button type="button" class="medrow" data-open-medicine="${id}">`;
 const openDoctor = id => `<button type="button" class="medrow" data-open-doctor="${id}">`;
 const openHospital = id => `<button type="button" class="medrow" data-open-hospital="${id}">`;
-const deleteBtn = (attr, id) => `<button type="button" class="rowdelete" ${attr}="${id}"`;
 
 // ---- the medicine library ----
 //
@@ -65,11 +64,14 @@ test("renderMedicineLibrary says so plainly when a search matches nothing", () =
   assert.ok(html.includes("Nothing here matches “zzz”."), html);
 });
 
-test("renderMedicineLibrary offers Delete only on the row the server would let go", () => {
+// A destructive control has no business on a list he scrolls with a thumb. Removing a medicine
+// lives on its detail screen, exactly as the Meds list leaves Delete to the prescription detail.
+// MED99 is the dangerous case: the server WOULD let it go, so a stray Delete here would work.
+test("renderMedicineLibrary puts no delete control on any row, not even one the server would let go", () => {
   const html = renderMedicineLibrary({ model: medicineModel(), query: "" });
-  assert.ok(html.includes(deleteBtn("data-delete-medicine", "MED99")), "MED99 is referenced by nothing");
-  assert.ok(!html.includes(`data-delete-medicine="MED01"`), "someone takes MED01");
-  assert.ok(!html.includes(`data-delete-medicine="MED05"`), "a stopped course still names MED05");
+  assert.ok(!html.includes("data-delete-medicine"), html);
+  assert.ok(!html.includes("rowdelete"), "no row-level destructive button of any kind");
+  assert.ok(html.includes(openMedicine("MED99")), "the deletable one is still on the list, just not deletable from here");
 });
 
 // takenBefore exists precisely so this row can explain itself: no current taker, no Delete
@@ -80,7 +82,7 @@ test("renderMedicineLibrary explains a medicine that is only in the list because
   assert.ok(html.includes(`<div class="s">Taken by Dad</div>`), "a current taker is named instead");
 });
 
-test("renderMedicineLibrary escapes a malicious medicine name in the row and in its Delete label", () => {
+test("renderMedicineLibrary escapes a malicious medicine name and strength in the row", () => {
   const model = { rows: [medRow("MED01", `<script>alert(1)</script>`, `"5 mg"`, { canDelete: true })] };
   const html = renderMedicineLibrary({ model, query: "" });
   assert.ok(!html.includes("<script>"), html);
@@ -102,17 +104,17 @@ test("renderMedicineLibrary invites the first medicine when the list is empty", 
 
 // ---- one medicine, in full ----
 //
-// medicineLibraryDetail's shape: { medicine, name, strength, unit, photos: [{label, url}],
+// medicineLibraryDetail's shape: { medicine, name, strength, unit, photos: [{label, slot, url}],
 // takenBy: [{userId, displayName}], takenBefore, canDelete }.
 const detailModel = over => Object.assign({
   medicine: { medicine_id: "MED01", generic_name: "Amlodipine", brand_name: "Norvasc", strength: "5 mg", form: "Tablet", purpose: "Blood pressure", notes: "" },
   name: "Norvasc (Amlodipine)", strength: "5 mg", unit: "tablet",
   photos: [
-    { label: "Box", url: "https://example.test/box.jpg" },
-    { label: "Packet front", url: "" },
-    { label: "Packet back", url: "" },
-    { label: "Pill front", url: "" },
-    { label: "Pill back", url: "" },
+    { label: "Box", slot: "box", url: "https://example.test/box.jpg" },
+    { label: "Packet front", slot: "packet_front", url: "" },
+    { label: "Packet back", slot: "packet_back", url: "" },
+    { label: "Pill front", slot: "pill_front", url: "" },
+    { label: "Pill back", slot: "pill_back", url: "" },
   ],
   takenBy: [{ userId: "U01", displayName: "Dad" }], takenBefore: false, canDelete: false,
 }, over);
@@ -205,10 +207,13 @@ test("renderDoctorLibrary's search keeps only the doctors whose name matches", (
   assert.ok(!html.includes(openDoctor("DOC99")), html);
 });
 
-test("renderDoctorLibrary offers Delete only on the doctor the server would let go", () => {
+// DOC99 is the dangerous case: the server would let it go, so a Delete left on the row would
+// actually fire. Removing a doctor lives at the foot of their edit form instead.
+test("renderDoctorLibrary puts no delete control on any row, not even one the server would let go", () => {
   const html = renderDoctorLibrary({ model: doctorModel(), query: "" });
-  assert.ok(html.includes(deleteBtn("data-delete-doctor", "DOC99")), html);
-  assert.ok(!html.includes(`data-delete-doctor="DOC01"`), "DOC01 prescribed something / is on a care team");
+  assert.ok(!html.includes("data-delete-doctor"), html);
+  assert.ok(!html.includes("rowdelete"), "no row-level destructive button of any kind");
+  assert.ok(html.includes(openDoctor("DOC99")), "the deletable one is still on the list, just not deletable from here");
 });
 
 test("renderDoctorLibrary escapes a malicious doctor name and specialty", () => {
@@ -255,10 +260,13 @@ test("renderHospitalLibrary's search keeps only the places whose name matches", 
   assert.ok(!html.includes(openHospital("HOS01")), html);
 });
 
-test("renderHospitalLibrary offers Delete only on the place the server would let go", () => {
+// HOS99 is the dangerous case: the server would let it go. Removing a place lives at the foot of
+// its edit form instead.
+test("renderHospitalLibrary puts no delete control on any row, not even one the server would let go", () => {
   const html = renderHospitalLibrary({ model: hospitalModel(), query: "" });
-  assert.ok(html.includes(deleteBtn("data-delete-hospital", "HOS99")), html);
-  assert.ok(!html.includes(`data-delete-hospital="HOS01"`), "a doctor works at HOS01");
+  assert.ok(!html.includes("data-delete-hospital"), html);
+  assert.ok(!html.includes("rowdelete"), "no row-level destructive button of any kind");
+  assert.ok(html.includes(openHospital("HOS99")), "the deletable one is still on the list, just not deletable from here");
 });
 
 test("renderHospitalLibrary escapes a malicious hospital name and phone", () => {
@@ -330,6 +338,26 @@ test("renderDoctorForm offers photo buttons for a saved doctor and explains thei
   assert.ok(fresh.includes("once they're saved"));
 });
 
+// Removing a doctor lives at the foot of the form that opens them -- outside the <form>, so it
+// can never be taken for Save -- and only when the server would allow it.
+test("renderDoctorForm offers Delete, outside the form, when the model says canDelete", () => {
+  const html = renderDoctorForm({ model: doctorFormModel({ canDelete: true }), error: "", busy: false });
+  assert.ok(html.includes(`<button type="button" class="primary light danger" data-delete-doctor="DOC01">Delete this doctor</button>`), html);
+  assert.ok(html.indexOf("data-delete-doctor") > html.indexOf("</form>"), "it must sit after the form, not inside it");
+});
+
+test("renderDoctorForm offers no Delete at all, and says what is holding the doctor, when canDelete is false", () => {
+  const html = renderDoctorForm({ model: doctorFormModel({ canDelete: false }), error: "", busy: false });
+  assert.ok(!html.includes("data-delete-doctor"), html);
+  assert.ok(html.includes("can&#39;t be removed while they&#39;re named on a medicine somebody takes"), html);
+});
+
+test("renderDoctorForm offers no Delete on a doctor that has not been saved yet", () => {
+  const html = renderDoctorForm({ model: { doctor: {}, hospitals: [], hospitalIds: [], canDelete: true }, error: "", busy: false });
+  assert.ok(!html.includes("data-delete-doctor"), html);
+  assert.ok(!html.includes("dangerzone"), "nothing to remove yet, so no section for it");
+});
+
 test("renderDoctorForm says where to add a hospital when there are none to tick yet", () => {
   const html = renderDoctorForm({ model: { doctor: {}, hospitals: [], hospitalIds: [] }, error: "", busy: false });
   assert.ok(!html.includes(`name="hospitalIds"`), html);
@@ -350,6 +378,24 @@ test("renderHospitalForm posts the server's own field names, under data-form=\"h
   assert.ok(html.includes(`name="map_link" value="https://maps.example.test/r"`));
   assert.ok(html.includes(`<textarea id="f-hos-address" name="address" rows="2">12 River Rd</textarea>`));
   assert.ok(html.includes(`<textarea id="f-hos-notes" name="notes" rows="2">Park at the back</textarea>`));
+});
+
+test("renderHospitalForm offers Delete, outside the form, when the model says canDelete", () => {
+  const html = renderHospitalForm({ model: hospitalFormModel({ canDelete: true }), error: "", busy: false });
+  assert.ok(html.includes(`<button type="button" class="primary light danger" data-delete-hospital="HOS01">Delete this place</button>`), html);
+  assert.ok(html.indexOf("data-delete-hospital") > html.indexOf("</form>"), "it must sit after the form, not inside it");
+});
+
+test("renderHospitalForm offers no Delete at all, and says what is holding the place, when canDelete is false", () => {
+  const html = renderHospitalForm({ model: hospitalFormModel({ canDelete: false }), error: "", busy: false });
+  assert.ok(!html.includes("data-delete-hospital"), html);
+  assert.ok(html.includes("can&#39;t be removed while somebody&#39;s hospital number"), html);
+});
+
+test("renderHospitalForm offers no Delete on a place that has not been saved yet", () => {
+  const html = renderHospitalForm({ model: { hospital: {}, canDelete: true }, error: "", busy: false });
+  assert.ok(!html.includes("data-delete-hospital"), html);
+  assert.ok(!html.includes("dangerzone"));
 });
 
 test("renderHospitalForm escapes every value it was handed", () => {
@@ -395,17 +441,39 @@ test("the three lists render from the real view models, right down to who takes 
   const idx = libraryIdx();
   const meds = renderMedicineLibrary({ model: medicineLibraryModel(idx), query: "" });
   assert.ok(meds.includes(openMedicine("MED01")), meds);
+  assert.ok(meds.includes(openMedicine("MED99")));
   assert.ok(meds.includes(`<div class="s">Taken by Dad</div>`), "the real model's takenBy reaches the row");
-  assert.ok(meds.includes(deleteBtn("data-delete-medicine", "MED99")), "nothing names MED99");
-  assert.ok(!meds.includes(`data-delete-medicine="MED01"`), "Dad takes MED01");
+  assert.ok(!meds.includes("data-delete-medicine"), "no delete on the list, whatever canDelete says");
 
   const docs = renderDoctorLibrary({ model: doctorLibraryModel(idx), query: "" });
   assert.ok(docs.includes(openDoctor("DOC01")), docs);
   assert.ok(docs.includes("Sees patients at Riverside General Hospital"));
-  assert.ok(!docs.includes(`data-delete-doctor="DOC01"`), "DOC01 prescribed RX01");
+  assert.ok(!docs.includes("data-delete-doctor"), "no delete on the list");
 
   const hospitals = renderHospitalLibrary({ model: hospitalLibraryModel(idx), query: "" });
   assert.ok(hospitals.includes(openHospital("HOS01")), hospitals);
   assert.ok(hospitals.includes("Doctors here: Dr. Somchai K."));
-  assert.ok(!hospitals.includes(`data-delete-hospital="HOS01"`), "DOC01 works at HOS01");
+  assert.ok(!hospitals.includes("data-delete-hospital"), "no delete on the list");
+});
+
+// The slot the photo buttons send is the model's, never something the view worked back out of
+// the label. Feeding the real medicineLibraryDetail through is what proves it: if the view were
+// deriving slots from labels again, rewording a label would break these buttons silently.
+test("the medicine detail's photo buttons carry the slots the real view model supplies", () => {
+  const html = renderMedicineLibraryDetail({ model: medicineLibraryDetail(libraryIdx(), "MED01"), photo: 0 });
+  assert.deepEqual(html.match(/data-upload-photo="[^"]*"/g) || [], [
+    'data-upload-photo="MED01|box"',
+    'data-upload-photo="MED01|packet_front"',
+    'data-upload-photo="MED01|packet_back"',
+    'data-upload-photo="MED01|pill_front"',
+    'data-upload-photo="MED01|pill_back"',
+  ]);
+});
+
+// A model whose photos carry no slot at all must render no photo buttons, rather than buttons
+// that would send "MED01|" to the server.
+test("the medicine detail renders no photo buttons for a photo with no slot", () => {
+  const html = renderMedicineLibraryDetail({ model: detailModel({ photos: [{ label: "Box", url: "" }] }), photo: 0 });
+  assert.ok(!html.includes("data-upload-photo"), html);
+  assert.ok(html.includes("<strong>Box</strong>"), "the slot is still shown, just with nothing to press");
 });

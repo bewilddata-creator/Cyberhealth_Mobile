@@ -161,6 +161,23 @@ function doctorPhotoBlock(model) {
       </div></div></div>`;
 }
 
+// Removing a doctor or a hospital lives here, at the bottom of the screen that opens it, and
+// never on the scrolling list -- the same rule the prescription screens follow, and for the same
+// reason: a destructive control beside a row a thumb is already moving past is a mis-tap waiting
+// to happen. It sits outside the <form> so it can never be confused for Save, under a rule and
+// its own heading.
+//
+// It renders only when the model says canDelete. The server refuses to remove anything still
+// pointed at, and a button that always fails is worse than no button -- so when it can't be
+// removed, the screen says what is holding it instead of offering to try.
+function deleteBlock({ canDelete, attr, id, label, why }) {
+  if (!id) return "";
+  return `<div class="dangerzone"><span class="dash">Removing this</span>
+    ${canDelete
+      ? `<button type="button" class="primary light danger" ${attr}="${val(id)}">${esc(label)}</button>`
+      : `<p class="sub">${esc(why)}</p>`}</div>`;
+}
+
 function hospitalChecks(model) {
   const hospitals = model.hospitals || [];
   const picked = (model.hospitalIds || []).map(String);
@@ -198,7 +215,14 @@ export function renderDoctorForm({ model, error, busy }) {
       ${hospitalChecks(m)}
       ${errorLine(error)}
       ${saveButton(busy, editing ? "Save changes" : "Add this doctor")}
-    </form>`;
+    </form>
+    ${deleteBlock({
+      canDelete: !!m.canDelete,
+      attr: "data-delete-doctor",
+      id: m.doctorId || doctor.doctor_id || "",
+      label: "Delete this doctor",
+      why: "This doctor can't be removed while they're named on a medicine somebody takes, or they're on somebody's care team.",
+    })}`;
 }
 
 // ---- a hospital or clinic in the family's shared list ----
@@ -228,7 +252,14 @@ export function renderHospitalForm({ model, error, busy }) {
       ${fields}
       ${errorLine(error)}
       ${saveButton(busy, editing ? "Save changes" : "Add this place")}
-    </form>`;
+    </form>
+    ${deleteBlock({
+      canDelete: !!m.canDelete,
+      attr: "data-delete-hospital",
+      id: m.hospitalId || hospital.hospital_id || "",
+      label: "Delete this place",
+      why: "This place can't be removed while somebody's hospital number, somebody's care team, or a doctor who works there still points at it.",
+    })}`;
 }
 
 // ---- somebody starts taking a medicine ----

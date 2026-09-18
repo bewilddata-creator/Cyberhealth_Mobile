@@ -457,7 +457,10 @@ export function medicineLibraryDetail(idx, medicineId) {
   const medicine = idx.medicines.get(medicineId);
   if (!medicine) return null;
   const { name, strength } = medicineNameParts(medicine);
-  const photos = PHOTO_FIELDS.map(([field, label]) => ({ label, url: driveImageUrl(medicine[field]) }));
+  // slot travels with the label, exactly as detailModel sends it: the photo actions take the
+  // slot name (box, pill_front, …), and a view that had to work it back out from the label would
+  // break the first time somebody reworded one.
+  const photos = PHOTO_FIELDS.map(([field, label, slot]) => ({ label, slot, url: driveImageUrl(medicine[field]) }));
   const takenBy = activeTakerIds(idx, medicineId)
     .map(userId => ({ userId, displayName: displayNameOf(idx, userId) }))
     .sort(byLocale(t => t.displayName));

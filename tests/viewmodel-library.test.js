@@ -118,6 +118,19 @@ test("medicineLibraryDetail gives the five photo slots in order, labelled, blank
   assert.ok(d.photos[3].url, "the pill front photo is a Drive thumbnail URL");
 });
 
+// The slot, not the label, is what uploadMedicinePhoto and removeMedicinePhoto take. It travels
+// with the label so no view ever has to work it back out of "Packet front" -- a label is
+// presentation, somebody will reword it, and a derived slot would stop matching that same day.
+test("medicineLibraryDetail sends each photo's server slot alongside its label", () => {
+  const d = medicineLibraryDetail(libraryIdx(), "MED01");
+  assert.deepEqual(d.photos.map(p => p.slot), ["box", "packet_front", "packet_back", "pill_front", "pill_back"]);
+  assert.deepEqual(
+    d.photos.map(p => `${p.label}=${p.slot}`),
+    ["Box=box", "Packet front=packet_front", "Packet back=packet_back", "Pill front=pill_front", "Pill back=pill_back"],
+    "each slot stays paired with its own label"
+  );
+});
+
 test("medicineLibraryDetail returns null for a medicine that isn't there", () => {
   assert.equal(medicineLibraryDetail(libraryIdx(), "MED-GONE"), null);
 });
