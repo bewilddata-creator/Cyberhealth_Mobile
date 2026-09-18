@@ -216,7 +216,7 @@ export function renderHospitalLibrary({ model, query }) {
     const doctors = (r.doctorNames || []).length ? `Doctors here: ${(r.doctorNames || []).join(", ")}` : "";
     return libraryRow(
       "data-open-hospital", hospital.hospital_id || "",
-      `<span class="thumb" aria-hidden="true"></span>
+      `<span class="thumb" aria-hidden="true">${I.hospital}</span>
         <div><div class="name">${esc(hospital.name || "Unknown hospital")}</div>
           <div class="s">${esc(hospital.phone || "No phone number saved yet")}</div>
           ${doctors ? `<div class="s">${esc(doctors)}</div>` : ""}</div>`

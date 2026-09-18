@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { renderMedicineLibrary, renderMedicineLibraryDetail, renderDoctorLibrary, renderHospitalLibrary } from "../js/views/libraries.js";
 import { renderDoctorForm, renderHospitalForm } from "../js/views/forms.js";
 import { indexBoot, medicineLibraryModel, medicineLibraryDetail, doctorLibraryModel, hospitalLibraryModel } from "../js/viewmodel.js";
+import { I } from "../js/icons.js";
 
 const openMedicine = id => `<button type="button" class="medrow" data-open-medicine="${id}">`;
 const openDoctor = id => `<button type="button" class="medrow" data-open-doctor="${id}">`;
@@ -251,6 +252,20 @@ test("renderHospitalLibrary renders a row for every place, showing its phone num
   assert.ok(html.includes(`<div class="s">02-555-0110</div>`));
   assert.ok(html.includes(`<div class="s">No phone number saved yet</div>`), "a place with no number says so");
   assert.ok(html.includes("2 places"));
+});
+
+// A hospital row's thumb once rendered completely empty: the icon interpolation was broken in an
+// edit and no test looked inside the <span>, so an empty circle shipped on every row. This pins
+// the rendered SVG, not the name of the icon constant -- a thumb that renders to nothing fails.
+test("renderHospitalLibrary draws the building icon in each row's thumb, never an empty circle", () => {
+  const html = renderHospitalLibrary({ model: hospitalModel(), query: "" });
+  const thumbs = html.match(/<span class="thumb" aria-hidden="true">([\s\S]*?)<\/span>/g) || [];
+  assert.equal(thumbs.length, 2, "one thumb per hospital row");
+  for (const thumb of thumbs) {
+    assert.ok(thumb.includes("<svg"), `a hospital row's thumb rendered empty: ${thumb}`);
+    assert.ok(thumb.includes(I.hospital), "it must be the building icon");
+  }
+  assert.ok(!html.includes(I.team), "and not the people icon it replaced");
 });
 
 test("renderHospitalLibrary offers an Add button and a search box", () => {
