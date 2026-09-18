@@ -1,6 +1,6 @@
 import { esc } from "../html.js";
 
-const COMING_SOON = ["Medicines & prescriptions", "Medicine library", "Hospital numbers", "Care team", "Sharing", "Change password"];
+const COMING_SOON = ["Hospitals & doctors", "Hospital numbers", "Care team", "Sharing", "Change password", "Adding family members"];
 
 export function renderMore({ me, warnings }) {
   return `<div><span class="title-sm">Settings</span><h1 class="big">More</h1></div>

@@ -37,10 +37,11 @@ There are three things you'll end up with:
    sample data so you can see the shape of a real row. Delete every grey
    example row once you understand it (right-click the row number → Delete
    row). Two exceptions: the **Settings** tab's `photo_folder_id` row is
-   real, not an example — leave it as is (photo storage isn't used until
-   release 2, but the value is already correct); and **DoseLog** has no
-   example rows at all — it starts empty and fills in automatically as
-   doses are ticked in the app, so there's nothing to delete there.
+   real, not an example — leave it as is; it's the Drive folder the app
+   stores medicine and doctor photos in, and the value is already correct.
+   And **DoseLog** has no example rows at all — it starts empty and fills
+   in automatically as doses are ticked in the app, so there's nothing to
+   delete there.
 7. Fill in your family's real data, tab by tab. A few things matter more
    than others:
    - **Users** — one row per person who will use the app. `user_id` is a
@@ -80,19 +81,13 @@ There are three things you'll end up with:
 
 ### Changing a medicine later
 
-Once the app is live, a medicine change is always an edit to an existing
-row, never a delete-and-retype — the app (and the medicine's history)
-assumes an id, once used, always means the same prescription:
-
-- **Dose amount changed?** Edit the `amount` on that dose's row in
-  **PrescriptionDoses** in place — same `dose_id`, same `prescription_id`.
-- **Medicine stopped?** Set that row's `status` in **Prescriptions** to
-  `Stopped`. Never delete the row, and never add a second `Prescriptions`
-  row for the same person and medicine — the app can't tell that apart
-  from a mistake, and will show the pill twice and warn about it.
-- Either way, add a line to **PrescriptionChanges** describing what
-  changed and why — it's what shows in the app's medicine history — then
-  run `checkSheet` again to make sure nothing broke.
+Once the app is live, add, change, stop, restart or delete a medicine from
+the app itself — see "Changing a medicine from the app" further down this
+guide — not by editing the `Prescriptions`, `PrescriptionDoses` or
+`PrescriptionChanges` tabs by hand. The app writes to all three together
+and keeps the medicine's history in step with what was actually taken; a
+hand edit in the Sheet can't do that, and will leave that history wrong or
+missing.
 
 ## Part 2 — Add the Apps Script
 
@@ -350,15 +345,17 @@ Before committing, run `npm run sync-gs && npm test && git status --short`
 and make sure the tests are green and there's no uncommitted drift in
 `apps-script/`.
 
-## What's in release 1 / coming in release 2
+## What's in this build / still coming
 
-**Release 1 (this build):**
+**This build:**
 
 - Login per person, with password reset via a 6-digit code the family
   admin sets in the Sheet.
 - Today screen: this week's schedule, ticking doses as taken.
-- Viewing the medicine library, each person's prescriptions and dose
-  history.
+- Adding, editing, stopping, restarting and deleting your own medicines and
+  prescriptions from the app itself, and adding or editing a medicine in
+  the shared library, with photos for each — see "Changing a medicine from
+  the app" above.
 - Viewing doctors, hospitals and each person's care team.
 - Viewing and editing your own emergency card; viewing everyone else's.
 - A public, no-login emergency card, reachable from the login screen.
@@ -368,15 +365,12 @@ and make sure the tests are green and there's no uncommitted drift in
 - Installs to the home screen as a full-screen app with offline caching of
   already-loaded screens.
 
-**Coming in release 2** (the app's own "More" screen already lists these
-under "Coming soon"):
+**Still coming** (the app's own "More" screen lists these under "Coming
+soon"), done directly in the Sheet for now:
 
-- Adding and editing medicines, prescriptions and dose schedules from the
-  app itself (for now, this is done directly in the Sheet).
-- Adding to the medicine library, hospital numbers and care team from the
-  app.
-- Managing `Sharing` rules from the app.
+- Adding and editing hospitals, doctors, and which hospitals a doctor
+  works at.
+- Adding hospital numbers and care team entries.
+- Managing `Sharing` rules, and adding family members.
 - Changing your own password from inside the app (without needing a reset
   code).
-- Photos for medicines and doctors (the Sheet's `photo_folder_id` setting
-  is already in place for this).
