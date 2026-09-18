@@ -3,7 +3,7 @@
 // lands, the save button dead while a save is in flight, and the exact values the server accepts.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { renderMedicineForm, renderPrescriptionForm, renderDoseForm } from "../js/views/forms.js";
+import { renderMedicineForm, renderPrescriptionForm, renderDoseForm, renderScheduleForm } from "../js/views/forms.js";
 
 test("renderMedicineForm escapes what the user typed", () => {
   const html = renderMedicineForm({ medicine: { generic_name: `<script>alert(1)</script>` }, error: "", busy: false });
@@ -59,6 +59,7 @@ test("every form carries the data-form name the submit handler dispatches on", (
   assert.match(renderMedicineForm({ medicine: {}, error: "", busy: false }), /data-form="medicine"/);
   assert.match(renderPrescriptionForm({ model: {}, error: "", busy: false }), /data-form="prescription"/);
   assert.match(renderDoseForm({ model: { doses: [] }, error: "", busy: false }), /data-form="dose"/);
+  assert.match(renderScheduleForm({ model: {}, error: "", busy: false }), /data-form="schedule"/);
 });
 
 test("each form has exactly one submit button; every other button says type=button", () => {
@@ -66,6 +67,7 @@ test("each form has exactly one submit button; every other button says type=butt
     renderMedicineForm({ medicine: {}, error: "", busy: false }),
     renderPrescriptionForm({ model: { medicines: [], doctors: [], frequency: "Every N days", doses: [] }, error: "", busy: false }),
     renderDoseForm({ model: { medicineName: "A", doses: [] }, error: "", busy: false }),
+    renderScheduleForm({ model: { medicineName: "A", doctors: [], frequency: "Weekdays" }, error: "", busy: false }),
   ];
   for (const html of forms) {
     const buttons = html.match(/<button[^>]*>/g) || [];
@@ -161,6 +163,7 @@ test("every form disables its save button and says what it is doing while busy",
     renderMedicineForm({ medicine: {}, error: "", busy: true }),
     renderPrescriptionForm({ model: { medicines: [], doctors: [], frequency: "Daily", doses: [] }, error: "", busy: true }),
     renderDoseForm({ model: { medicineName: "A", doses: [] }, error: "", busy: true }),
+    renderScheduleForm({ model: { medicineName: "A", doctors: [], frequency: "Daily" }, error: "", busy: true }),
   ]) {
     assert.match(html, /disabled/);
     assert.match(html, /Saving…/);
@@ -172,6 +175,7 @@ test("every form shows the error in a live region so a screen reader announces i
     renderMedicineForm({ medicine: {}, error: "Nope.", busy: false }),
     renderPrescriptionForm({ model: { medicines: [], doctors: [], frequency: "Daily", doses: [] }, error: "Nope.", busy: false }),
     renderDoseForm({ model: { medicineName: "A", doses: [] }, error: "Nope.", busy: false }),
+    renderScheduleForm({ model: { medicineName: "A", doctors: [], frequency: "Daily" }, error: "Nope.", busy: false }),
   ]) {
     assert.match(html, /<p class="err" role="alert">Nope\.<\/p>/);
   }
@@ -182,8 +186,89 @@ test("no form ever prints undefined or null from a model field nobody filled in"
     renderMedicineForm({ medicine: {}, error: "", busy: false }),
     renderPrescriptionForm({ model: {}, error: "", busy: false }),
     renderDoseForm({ model: {}, error: "", busy: false }),
+    renderScheduleForm({ model: {}, error: "", busy: false }),
   ]) {
     assert.doesNotMatch(html, /undefined/);
     assert.doesNotMatch(html, />null</);
   }
+});
+
+test("an amount box refuses a literal 0 on the phone, so 0 never travels to the server", () => {
+  for (const html of [
+    renderPrescriptionForm({ model: { medicines: [], doctors: [], frequency: "Daily", doses: [] }, error: "", busy: false }),
+    renderDoseForm({ model: { medicineName: "A", doses: [] }, error: "", busy: false }),
+  ]) {
+    const amounts = html.match(/<input[^>]*name="amount(?:Morning|Noon|Evening|Bedtime)"[^>]*>/g) || [];
+    assert.equal(amounts.length, 4);
+    for (const box of amounts) {
+      assert.doesNotMatch(box, /min="0"/, "min=0 would let a 0 through to an action that rejects it");
+      assert.match(box, /min="0\.01"/);
+      assert.match(box, /step="any"/, "half and quarter tablets still have to go through");
+    }
+  }
+});
+
+test("the amount and unit columns are labelled by something that stays after he types", () => {
+  const html = renderDoseForm({ model: { medicineName: "A", doses: [] }, error: "", busy: false });
+  assert.match(html, /class="form-row dose-row dose-head"/);
+  assert.match(html, /How much/);
+  assert.match(html, /Tablets, ml, drops/);
+});
+
+// ---- the schedule change (F1: the flow the detail screen has a button for) ----
+
+test("renderScheduleForm carries the prescription it is changing and names the medicine", () => {
+  const html = renderScheduleForm({ model: { prescriptionId: "RX01", medicineName: "Amlodipine", frequency: "Daily", doctors: [] }, error: "", busy: false });
+  assert.match(html, /name="prescriptionId" value="RX01"/);
+  assert.match(html, /Amlodipine/);
+  assert.match(html, /Save the new schedule/);
+  assert.doesNotMatch(html, /Add to the list/);
+});
+
+// changePrescriptionSchedule reads neither, so offering them would silently discard an edit.
+test("renderScheduleForm shows no medicine picker and no amount rows, because the action ignores both", () => {
+  const html = renderScheduleForm({
+    model: { prescriptionId: "RX01", medicineName: "Amlodipine", frequency: "Daily", doctors: [], medicines: [{ medicine_id: "MED01", generic_name: "Amlodipine" }], doses: [{ timeOfDay: "Morning", amount: 1, unit: "tablet" }] },
+    error: "", busy: false,
+  });
+  assert.doesNotMatch(html, /name="medicineId"/);
+  assert.doesNotMatch(html, /data-new-medicine/);
+  for (const t of ["Morning", "Noon", "Evening", "Bedtime"]) {
+    assert.doesNotMatch(html, new RegExp(`name="amount${t}"`), `${t} amount must not be on this form`);
+    assert.doesNotMatch(html, new RegExp(`name="unit${t}"`), `${t} unit must not be on this form`);
+  }
+});
+
+test("renderScheduleForm offers exactly the schedule fields the action writes", () => {
+  const html = renderScheduleForm({ model: { prescriptionId: "RX01", medicineName: "A", frequency: "Daily", doctors: [{ doctor_id: "DOC01", name: "Dr Somchai" }], doctorId: "DOC01" }, error: "", busy: false });
+  for (const name of ["frequency", "mealTiming", "doctorId", "reason"]) {
+    assert.match(html, new RegExp(`name="${name}"`), name);
+  }
+  assert.match(html, /value="DOC01" selected/);
+  for (const v of ["Daily", "Every N days", "Weekdays", "As needed"]) assert.match(html, new RegExp(`value="${v}"`), v);
+  for (const v of ["Before meal", "After meal", "With meal", "Any time"]) assert.match(html, new RegExp(`value="${v}"`), v);
+});
+
+test("renderScheduleForm asks how many days only for Every N days, and which weekdays only for Weekdays", () => {
+  const daily = renderScheduleForm({ model: { frequency: "Daily", doctors: [] }, error: "", busy: false });
+  assert.doesNotMatch(daily, /name="everyNDays"/);
+  assert.doesNotMatch(daily, /name="weekdays"/);
+
+  const everyN = renderScheduleForm({ model: { frequency: "Every N days", everyNDays: 2, countFrom: "2026-09-18", doctors: [] }, error: "", busy: false });
+  assert.match(everyN, /name="everyNDays"[^>]*value="2"/);
+  assert.match(everyN, /name="countFrom"[^>]*value="2026-09-18"/);
+
+  const weekdays = renderScheduleForm({ model: { frequency: "Weekdays", weekdays: ["Wed"], doctors: [] }, error: "", busy: false });
+  const boxes = weekdays.match(/name="weekdays"[^>]*>/g) || [];
+  assert.equal(boxes.length, 7);
+  assert.equal(boxes.filter(b => /checked/.test(b)).length, 1);
+});
+
+test("renderScheduleForm keeps the reason optional and escapes a hand-typed medicine name", () => {
+  const html = renderScheduleForm({ model: { prescriptionId: "RX01", medicineName: `<script>x</script>`, frequency: "Daily", doctors: [], reason: `<b>why</b>` }, error: "", busy: false });
+  assert.match(html, /name="reason"/);
+  assert.doesNotMatch(html, /name="reason"[^>]*required/);
+  assert.doesNotMatch(html, /<script>/);
+  assert.doesNotMatch(html, /<b>why<\/b>/);
+  assert.match(html, /&lt;script&gt;/);
 });

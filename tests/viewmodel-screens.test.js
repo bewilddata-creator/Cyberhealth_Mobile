@@ -155,11 +155,15 @@ test("canEditOwner reads the grant bootstrap already sent for each person", () =
 test("detailModel offers Delete only while nothing has been ticked against the prescription", () => {
   // The shared fixture's DoseLog is empty, so this builds the two cases directly.
   const prescription = (id, medicineId) => ({ id, userId: "U01", medicineId, freq: "Daily", n: 0, days: [], countFrom: "", meal: "Any time", doctorId: "", status: "Active", startedOn: "2026-01-01", notes: "" });
+  const logRow = (id, prescriptionId, status) => ({ log_id: id, prescription_id: prescriptionId, date: "2026-09-17", time_of_day: "Morning", amount_taken: "1", unit: "tablet", status, taken_at: "2026-09-17 08:00", taken_by: "U01" });
   const idx = indexBoot({
     today: "2026-09-18", medicines: [], hospitals: [], doctors: [], people: [], doses: [], changes: [],
-    prescriptions: [prescription("RX01", "MED01"), prescription("RX02", "MED02")],
-    dose_log: [{ log_id: "L1", prescription_id: "RX01", date: "2026-09-17", time_of_day: "Morning", amount_taken: "1", unit: "tablet", status: "Taken", taken_at: "2026-09-17 08:00", taken_by: "U01" }],
+    prescriptions: [prescription("RX01", "MED01"), prescription("RX02", "MED02"), prescription("RX03", "MED03")],
+    dose_log: [logRow("L1", "RX01", "Taken"), logRow("L2", "RX03", "Skipped")],
   });
   assert.equal(detailModel(idx, "U01", "RX01").canDelete, false, "a ticked prescription can only be stopped");
-  assert.equal(detailModel(idx, "U01", "RX02").canDelete, true, "nothing ticked, so it can still be deleted");
+  assert.equal(detailModel(idx, "U01", "RX02").canDelete, true, "no dose recorded, so it can still be deleted");
+  // deletePrescription refuses on ANY DoseLog row, so a Skipped row must hide Delete too --
+  // otherwise the app offers a button that can only ever come back as an error.
+  assert.equal(detailModel(idx, "U01", "RX03").canDelete, false, "a Skipped row is a recorded dose as far as the server is concerned");
 });

@@ -39,15 +39,22 @@ function saveButton(busy, label) {
 
 // One amount + unit pair per time of day, blank meaning "nothing at this time". The amount box
 // stays a real number input (the phone shows a number pad) but is never pre-filled with 0 -- an
-// empty box has to mean "not then", and a 0 the server would reject.
+// empty box has to mean "not then". min is 0.01 rather than 0 so the phone catches a typed 0
+// itself, instead of letting it travel to the server only to come back as an error; half and
+// quarter tablets still go through.
+//
+// The two columns carry a heading that stays on screen: a placeholder vanishes the moment he
+// starts typing, which is exactly when he still needs to know which box is which.
 function doseRows(doses) {
   const byTime = new Map();
   (doses || []).forEach(d => { if (d && !byTime.has(d.timeOfDay)) byTime.set(d.timeOfDay, d); });
-  return TIMES_OF_DAY.map(t => {
+  const head = `<div class="form-row dose-row dose-head" aria-hidden="true"><span></span>
+    <div class="dose-line"><span>How much</span><span>Tablets, ml, drops…</span></div></div>`;
+  return head + TIMES_OF_DAY.map(t => {
     const d = byTime.get(t);
     return `<div class="form-row dose-row"><label for="f-amount-${t}">${t}</label>
       <div class="dose-line">
-        <input id="f-amount-${t}" name="amount${t}" value="${d ? val(d.amount) : ""}" type="number" inputmode="decimal" min="0" step="any" placeholder="How much">
+        <input id="f-amount-${t}" name="amount${t}" value="${d ? val(d.amount) : ""}" type="number" inputmode="decimal" min="0.01" step="any" placeholder="How much">
         <input id="f-unit-${t}" name="unit${t}" value="${d ? val(d.unit) : ""}" type="text" placeholder="tablet, ml" autocomplete="off" aria-label="What the ${t} amount is counted in, like tablet or ml">
       </div></div>`;
   }).join("");
@@ -122,7 +129,7 @@ function frequencyRows(model) {
 
 function mealRow(model) {
   const chosen = model.mealTiming || "Any time";
-  return `<div class="form-row"><label for="f-meal">When, around food?</label>
+  return `<div class="form-row"><label for="f-meal">Before or after food?</label>
     <select id="f-meal" name="mealTiming">${MEAL_LABELS.map(([value, label]) =>
       `<option value="${value}" ${value === chosen ? "selected" : ""}>${esc(label)}</option>`).join("")}</select></div>`;
 }
@@ -136,9 +143,16 @@ function doctorRow(model) {
     </select></div>`;
 }
 
+// "Why the change? (optional)" -- the same box on both forms that record a change, because the
+// wording of the history entry the family reads later comes straight out of it.
+function reasonRow(model) {
+  return `<div class="form-row"><label for="f-reason">Why the change? (optional)</label>
+    <textarea id="f-reason" name="reason" rows="2" placeholder="${esc(model.reasonHint || "Like: the doctor changed it")}">${val(model.reason)}</textarea></div>`;
+}
+
 export function renderPrescriptionForm({ model, error, busy }) {
   const m = model || {};
-  const who = m.ownerName ? `What ${esc(m.ownerName)} takes` : "A new medicine to take";
+  const who = m.ownerName ? `Add a medicine ${esc(m.ownerName)} takes` : "Add a medicine to take";
   return `${topBar("New medicine to take")}
     <h1 class="big">${who}</h1>
     <form class="edit-form" data-form="prescription">
@@ -166,10 +180,33 @@ export function renderDoseForm({ model, error, busy }) {
       ${m.prescriptionId ? `<input type="hidden" name="prescriptionId" value="${val(m.prescriptionId)}">` : ""}
       ${DOSE_HINT}
       ${doseRows(m.doses)}
-      <div class="form-row"><label for="f-reason">Why the change? (optional)</label>
-        <textarea id="f-reason" name="reason" rows="2" placeholder="Like: the doctor halved it">${val(m.reason)}</textarea></div>
+      ${reasonRow({ ...m, reasonHint: "Like: the doctor halved it" })}
       <p class="note">The old amount stays in this medicine's history, so you can always see what changed and when.</p>
       ${errorLine(error)}
       ${saveButton(busy, "Save the new dose")}
+    </form>`;
+}
+
+// ---- the days and times changed ----
+//
+// Deliberately NOT the add form in another costume. changePrescriptionSchedule reads only the
+// schedule fields (frequency, every_n_days, weekdays, count_from, meal_timing, doctor_id): it
+// ignores medicineId and doses outright. Showing a medicine picker or four amount boxes here
+// would take an edit the daughter made and throw it away without a word -- the exact failure
+// this release exists to remove. So neither is on this form, and the note says where they live.
+export function renderScheduleForm({ model, error, busy }) {
+  const m = model || {};
+  const name = m.medicineName ? esc(m.medicineName) : "this medicine";
+  return `${topBar("Change when it's taken")}
+    <h1 class="big">When to take ${name}</h1>
+    <form class="edit-form" data-form="schedule">
+      ${m.prescriptionId ? `<input type="hidden" name="prescriptionId" value="${val(m.prescriptionId)}">` : ""}
+      <p class="note">This changes the days and times only. How much to take stays as it is — use “Change how much to take” for that.</p>
+      ${frequencyRows(m)}
+      ${mealRow(m)}
+      ${doctorRow(m)}
+      ${reasonRow({ ...m, reasonHint: "Like: moved to bedtime" })}
+      ${errorLine(error)}
+      ${saveButton(busy, "Save the new schedule")}
     </form>`;
 }

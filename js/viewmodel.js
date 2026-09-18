@@ -240,12 +240,14 @@ export function detailModel(idx, ownerId, prescriptionId) {
       before: c.before,
       after: c.after,
     }));
-  // Whether to offer Delete rather than only Stop. A prescription anyone has ever ticked must
-  // keep its history, so the app only offers Delete when nothing was ticked -- for the medicine
-  // added by mistake. idx.ticks only holds the days bootstrap sent (DOSE_LOG_WINDOW_DAYS), so a
-  // much older tick can still make this true; the server checks the whole DoseLog again and
-  // refuses with a message that says so, which is why a wrong answer here is only a button.
-  const canDelete = ![...idx.ticks.values()].some(t => t.prescription_id === prescriptionId);
+  // Whether to offer Delete rather than only Stop. A prescription with any dose recorded against
+  // it must keep its history, so Delete is only for the medicine added by mistake. This reads
+  // boot.dose_log rather than idx.ticks on purpose: idx.ticks holds only status=Taken rows, but
+  // deletePrescription refuses on ANY DoseLog row, a Skipped one included -- reading the ticks
+  // would offer a Delete button that could only ever fail. Bootstrap still sends just the last
+  // DOSE_LOG_WINDOW_DAYS, so an older row can leave this true; the server checks the whole sheet
+  // again and says why it refused, which is why a wrong answer here is only a button.
+  const canDelete = !(idx.boot.dose_log || []).some(r => r.prescription_id === prescriptionId);
   return { prescription: p, medicine, doses, photos, doctor, hospital, hn, history, canDelete };
 }
 

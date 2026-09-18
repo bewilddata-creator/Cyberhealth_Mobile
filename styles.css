@@ -254,8 +254,11 @@ button.banner.warn{background:var(--yellow-2)}
 .primary.light.danger{color:var(--alert)}
 /* A form row whose control is a group of checkboxes, not one field: same weight as a <label>. */
 .rowlabel{font-weight:700;font-size:14px}
-/* Seven days across a 320px phone: 7 × 40px + 6 × 4px gap fits the 288px of content width. */
-.daypicks{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
+/* Seven tiles in a row need 7 × 44px + 6 × 4px = 332px of content width, which a 320px phone
+   (288px of content) does not have -- so it wraps to 4 + 3 instead of squeezing them to 38px.
+   At 380px and up (348px of content) all seven fit on one line at 46px each. */
+.daypicks{display:grid;grid-template-columns:repeat(4,minmax(44px,1fr));gap:4px}
+@media (min-width:380px){.daypicks{grid-template-columns:repeat(7,minmax(44px,1fr))}}
 .daypick{position:relative;display:grid;place-items:center;gap:2px;background:var(--sand);border:1.5px dashed var(--ink-3);border-radius:14px;min-height:56px;padding:4px 0;font-weight:700;font-size:12px;cursor:pointer}
 /* The whole 56px-tall label is the tap target; the box itself just has to be easy to see. */
 .daypick input{width:24px;height:24px;margin:0;accent-color:var(--ink)}
@@ -265,6 +268,9 @@ button.banner.warn{background:var(--yellow-2)}
    narrow phone, so the amount box never gets squeezed to nothing. */
 .dose-row{grid-template-columns:minmax(0,1fr);align-items:center}
 @media (min-width:360px){.dose-row{grid-template-columns:4.75em minmax(0,1fr);gap:8px}}
+/* The column headings that stay put once the placeholders are typed over. */
+.dose-head{font-weight:700;font-size:13px;color:var(--ink-2)}
+.dose-head .dose-line > span{padding-left:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 
 /* settings: medicine library photo slots */
