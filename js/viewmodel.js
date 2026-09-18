@@ -1,5 +1,5 @@
 // Pure screen models built from bootstrap data. No DOM.
-import { TIMES_OF_DAY, FREQ, WEEKDAYS, DOSE_LOG_WINDOW_DAYS, weekdayOf, addDays, doseItemsOn, doseKey, slotStatus, countsOnDay, describeFrequency, describeDoses, dedupeActivePrescriptions } from "./schedule.js";
+import { TIMES_OF_DAY, FREQ, WEEKDAYS, DOSE_LOG_WINDOW_DAYS, weekdayOf, addDays, doseItemsOn, doseKey, slotStatus, countsOnDay, describeFrequency, describeDoses, dedupeActivePrescriptions, medicineNameParts, unitForMedicineForm } from "./schedule.js";
 import { resolveMockPhoto } from "./mockphoto.js";
 
 export function driveImageUrl(link) {
@@ -366,4 +366,130 @@ export function emergencyModel(boot, userId) {
     conditions: splitSemi(card.conditions),
     age: ageOn(card.date_of_birth, boot.today),
   };
+}
+
+// ---- Medicine, Doctor and Hospital libraries (Task 4) ----
+
+// Every name in these libraries can carry Thai characters, and a strength like "10 mg" must sort
+// after "5 mg" rather than before it -- hence locale-aware, numeric-aware comparison everywhere
+// here, never a raw < or >.
+function localeSort(strings) {
+  return strings.slice().sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }));
+}
+function byLocale(key) {
+  return (a, b) => key(a).localeCompare(key(b), undefined, { sensitivity: "base", numeric: true });
+}
+
+// The thumbnail shown in a medicine's library row: the first photo slot that actually has one,
+// in the same box/packet/pill priority order the detail screen uses to recognise the medicine.
+function firstMedicinePhotoUrl(medicine) {
+  for (const [field] of PHOTO_FIELDS) {
+    const url = driveImageUrl(medicine[field]);
+    if (url) return url;
+  }
+  return "";
+}
+
+// Who currently takes a medicine: only Active prescriptions count as "taking it" in the present
+// tense -- a Stopped course still blocks deleting the medicine (it is history), but it does not
+// belong in a "who takes this" list.
+function activeTakerIds(idx, medicineId) {
+  return [...new Set([...idx.prescriptions.values()].filter(p => p.medicineId === medicineId && p.status === "Active").map(p => p.userId))];
+}
+function displayNameOf(idx, userId) {
+  return (idx.people.get(userId) || {}).display_name || "";
+}
+
+// canDelete below must mirror server/actions.js exactly (deleteMedicine/deleteDoctor/
+// deleteHospital, via their shared referencesTo helper) -- a wrong answer here is a Delete
+// button the server will refuse, which reads to the family as a broken app.
+function medicineIsReferenced(idx, medicineId) {
+  // deleteMedicine refuses on ANY Prescriptions row naming the medicine, Active or Stopped --
+  // a stopped course is still history.
+  return [...idx.prescriptions.values()].some(p => p.medicineId === medicineId);
+}
+function doctorIsReferenced(idx, doctorId) {
+  // deleteDoctor refuses on any Prescriptions.doctor_id or CareTeam.doctor_id row.
+  const inPrescriptions = [...idx.prescriptions.values()].some(p => p.doctorId === doctorId);
+  const inCareTeam = (idx.boot.care_team || []).some(c => c.doctor_id === doctorId);
+  return inPrescriptions || inCareTeam;
+}
+function hospitalIsReferenced(idx, hospitalId) {
+  // deleteHospital refuses on any HospitalNumbers, CareTeam or DoctorHospitals row.
+  const inHospitalNumbers = (idx.boot.hospital_numbers || []).some(h => h.hospital_id === hospitalId);
+  const inCareTeam = (idx.boot.care_team || []).some(c => c.hospital_id === hospitalId);
+  const inDoctorHospitals = (idx.boot.doctor_hospitals || []).some(dh => dh.hospital_id === hospitalId);
+  return inHospitalNumbers || inCareTeam || inDoctorHospitals;
+}
+
+export function medicineLibraryModel(idx) {
+  const rows = [...idx.medicines.values()].map(medicine => {
+    const { name, strength } = medicineNameParts(medicine);
+    const medicineId = medicine.medicine_id;
+    const takenBy = localeSort(activeTakerIds(idx, medicineId).map(userId => displayNameOf(idx, userId)).filter(Boolean));
+    return {
+      medicine, name, strength,
+      photoUrl: firstMedicinePhotoUrl(medicine),
+      takenBy,
+      canDelete: !medicineIsReferenced(idx, medicineId),
+    };
+  });
+  rows.sort((a, b) => {
+    const byName = a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true });
+    return byName || a.strength.localeCompare(b.strength, undefined, { sensitivity: "base", numeric: true });
+  });
+  return { rows };
+}
+
+export function medicineLibraryDetail(idx, medicineId) {
+  const medicine = idx.medicines.get(medicineId);
+  if (!medicine) return null;
+  const { name, strength } = medicineNameParts(medicine);
+  const photos = PHOTO_FIELDS.map(([field, label]) => ({ label, url: driveImageUrl(medicine[field]) }));
+  const takenBy = activeTakerIds(idx, medicineId)
+    .map(userId => ({ userId, displayName: displayNameOf(idx, userId) }))
+    .sort(byLocale(t => t.displayName));
+  return {
+    medicine, name, strength,
+    unit: unitForMedicineForm(medicine.form),
+    photos, takenBy,
+    canDelete: !medicineIsReferenced(idx, medicineId),
+  };
+}
+
+export function doctorLibraryModel(idx) {
+  const rows = [...idx.doctors.values()].map(doctor => {
+    const doctorId = doctor.doctor_id;
+    const hospitalNames = localeSort(
+      (idx.boot.doctor_hospitals || [])
+        .filter(dh => dh.doctor_id === doctorId)
+        .map(dh => (idx.hospitals.get(dh.hospital_id) || {}).name)
+        .filter(Boolean)
+    );
+    return {
+      doctor, hospitalNames,
+      photoUrl: driveImageUrl(doctor.photo),
+      canDelete: !doctorIsReferenced(idx, doctorId),
+    };
+  });
+  rows.sort(byLocale(r => r.doctor.name));
+  return { rows };
+}
+
+export function hospitalLibraryModel(idx) {
+  const rows = [...idx.hospitals.values()].map(hospital => {
+    const hospitalId = hospital.hospital_id;
+    const doctorNames = localeSort(
+      (idx.boot.doctor_hospitals || [])
+        .filter(dh => dh.hospital_id === hospitalId)
+        .map(dh => (idx.doctors.get(dh.doctor_id) || {}).name)
+        .filter(Boolean)
+    );
+    return {
+      hospital, doctorNames,
+      canDelete: !hospitalIsReferenced(idx, hospitalId),
+    };
+  });
+  rows.sort(byLocale(r => r.hospital.name));
+  return { rows };
 }
