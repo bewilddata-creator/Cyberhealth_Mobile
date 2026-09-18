@@ -257,3 +257,19 @@ function describeDoses(doses) {
     })
     .join(" · ");
 }
+
+// The wording stored in PrescriptionChanges.before / .after. Words, not ids, so a change still
+// reads correctly years later even if the medicine or doctor behind it is renamed.
+function describeSchedule(prescription, doses) {
+  const freq = describeFrequency(prescription);
+  const meal = String(prescription.meal || "").trim();
+  const head = meal && meal !== "Any time" ? `${freq}, ${meal.toLowerCase()}` : freq;
+  if (!doses || doses.length === 0) return head;
+  const byTime = new Map();
+  doses.forEach(d => { if (!byTime.has(d.timeOfDay)) byTime.set(d.timeOfDay, d); });
+  const parts = TIMES_OF_DAY.filter(t => byTime.has(t)).map(t => {
+    const d = byTime.get(t);
+    return `${t} ${d.amount} ${pluralUnit(d.unit, d.amount)}`;
+  });
+  return parts.length ? `${head}: ${parts.join(", ")}` : head;
+}

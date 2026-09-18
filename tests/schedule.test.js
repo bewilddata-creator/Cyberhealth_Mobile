@@ -7,7 +7,7 @@ import {
   normalizePrescription, normalizeDose,
   isDue, doseItemsOn, doseKey, slotStatus, dedupeActivePrescriptions, rolloverDate,
   lastChangeDate, countsOnDay,
-  describeFrequency, describeDoses,
+  describeFrequency, describeDoses, describeSchedule,
 } from "../js/schedule.js";
 
 // ---- helpers to build valid rows, overridable per test ----
@@ -383,4 +383,40 @@ test("describeDoses pluralizes every Unit value from the Lists tab correctly", (
     assert.equal(describeDoses([d1]), `Morning ${one}`);
     assert.equal(describeDoses([d2]), `Morning ${two}`);
   });
+});
+
+test("describeSchedule joins frequency, meal timing and doses into one readable line", () => {
+  const p = { freq: FREQ.DAILY, n: 0, days: [], meal: "After meal" };
+  const doses = [
+    { timeOfDay: "Morning", amount: 1, unit: "tablet" },
+    { timeOfDay: "Evening", amount: 2, unit: "tablet" },
+  ];
+  assert.equal(describeSchedule(p, doses), "Every day, after meal: Morning 1 tablet, Evening 2 tablets");
+});
+
+test("describeSchedule leaves out the meal timing when it is Any time", () => {
+  const p = { freq: FREQ.DAILY, n: 0, days: [], meal: "Any time" };
+  const doses = [{ timeOfDay: "Morning", amount: 1, unit: "tablet" }];
+  assert.equal(describeSchedule(p, doses), "Every day: Morning 1 tablet");
+});
+
+test("describeSchedule orders doses Morning, Noon, Evening, Bedtime whatever order they arrive in", () => {
+  const p = { freq: FREQ.DAILY, n: 0, days: [], meal: "Any time" };
+  const doses = [
+    { timeOfDay: "Bedtime", amount: 1, unit: "tablet" },
+    { timeOfDay: "Morning", amount: 2, unit: "tablet" },
+  ];
+  assert.equal(describeSchedule(p, doses), "Every day: Morning 2 tablets, Bedtime 1 tablet");
+});
+
+test("describeSchedule says only 'When needed' for an As-needed prescription with no doses", () => {
+  const p = { freq: FREQ.AS_NEEDED, n: 0, days: [], meal: "Any time" };
+  assert.equal(describeSchedule(p, []), "When needed");
+});
+
+test("describeSchedule names an every-N-days schedule and its weekday list", () => {
+  const every = { freq: FREQ.EVERY_N, n: 3, days: [], meal: "Any time" };
+  assert.equal(describeSchedule(every, [{ timeOfDay: "Morning", amount: 1, unit: "shot" }]), "Every 3 days: Morning 1 shot");
+  const week = { freq: FREQ.WEEKDAYS, n: 0, days: ["Mon", "Thu"], meal: "Before meal" };
+  assert.equal(describeSchedule(week, [{ timeOfDay: "Noon", amount: 1, unit: "capsule" }]), "Mon + Thu, before meal: Noon 1 capsule");
 });
