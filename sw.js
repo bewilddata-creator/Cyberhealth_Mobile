@@ -1,4 +1,8 @@
-const CACHE = "cyberhealth-v1";
+// Bump this on every release that changes a shell file. The fetch handler is network-first and
+// install re-runs addAll, so an online phone gets the new build either way -- but a phone that is
+// offline across the upgrade window would otherwise go on serving a mix of old and new files out
+// of the same cache. A new name means the old cache is deleted whole on activate.
+const CACHE = "cyberhealth-v2";
 const SHELL = [
   "./",
   "index.html",
