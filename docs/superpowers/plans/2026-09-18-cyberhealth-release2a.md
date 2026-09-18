@@ -271,7 +271,7 @@ The engine every prescription action in Tasks 4 and 5 goes through.
 - Create: `server/prescriptions.js`
 - Modify: `scripts/sync-gs.mjs` — add `["server/prescriptions.js", "Prescriptions.gs"]` to `FILES`
 - Modify: `server/actions.js` — add the private helper `applyPrescriptionChange`
-- Test: `tests/prescriptions.test.js` (new), `tests/actions-write.test.js` (new)
+- Test: `tests/prescriptions.test.js` (new). **Not** `tests/actions-write.test.js` — that belongs to Task 4; see Step 6.
 
 **Interfaces:**
 - Consumes: `describeSchedule(prescription, doses)` (Task 1). From `js/schedule.js`: `TIMES_OF_DAY`, `FREQ`, `normalizePrescription`, `normalizeDose`, `bangkokStamp`, `bangkokToday`, `parseDate`. From `js/access.js`: `canEdit(viewerId, ownerId, section, sharing)`. From `server/actions.js` (already present): `AppError`, `requireUser(req, ctx)`, `sharingRows(ctx)`, `str(v)`, `stripRow(r)`, `activeUsers(ctx)`.
