@@ -9,6 +9,7 @@ export const FILES = [
   ["js/access.js", "Access.gs"],
   ["js/authcore.js", "AuthCore.gs"],
   ["server/actions.js", "Actions.gs"],
+  ["server/photos.js", "Photos.gs"],
 ];
 
 export function toGs(source, from) {
