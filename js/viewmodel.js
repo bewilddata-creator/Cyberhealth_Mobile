@@ -400,6 +400,17 @@ function displayNameOf(idx, userId) {
   return (idx.people.get(userId) || {}).display_name || "";
 }
 
+// A medicine can be un-deletable (medicineIsReferenced) while takenBy is empty: nobody takes it
+// NOW, but a Stopped course still names it, which is exactly what blocks the delete. Without
+// this the library row shows an empty "who takes it" list, offers no Delete button, and gives no
+// reason why -- reading as a broken screen rather than an explained one. True only when a Stopped
+// prescription references the medicine and no Active one does; when there's a current taker,
+// takenBy already says who, so no further explanation is needed.
+function takenBeforeOnly(idx, medicineId) {
+  const hasStopped = [...idx.prescriptions.values()].some(p => p.medicineId === medicineId && p.status === "Stopped");
+  return hasStopped && activeTakerIds(idx, medicineId).length === 0;
+}
+
 // canDelete below must mirror server/actions.js exactly (deleteMedicine/deleteDoctor/
 // deleteHospital, via their shared referencesTo helper) -- a wrong answer here is a Delete
 // button the server will refuse, which reads to the family as a broken app.
@@ -431,6 +442,7 @@ export function medicineLibraryModel(idx) {
       medicine, name, strength,
       photoUrl: firstMedicinePhotoUrl(medicine),
       takenBy,
+      takenBefore: takenBeforeOnly(idx, medicineId),
       canDelete: !medicineIsReferenced(idx, medicineId),
     };
   });
@@ -453,6 +465,7 @@ export function medicineLibraryDetail(idx, medicineId) {
     medicine, name, strength,
     unit: unitForMedicineForm(medicine.form),
     photos, takenBy,
+    takenBefore: takenBeforeOnly(idx, medicineId),
     canDelete: !medicineIsReferenced(idx, medicineId),
   };
 }

@@ -82,6 +82,30 @@ test("medicineLibraryModel lets an untouched medicine be deleted", () => {
   assert.deepEqual(spare.takenBy, []);
 });
 
+test("medicineLibraryModel says whether an undeletable medicine is currently taken or only used to be", () => {
+  const idx = libraryIdx();
+  const rows = medicineLibraryModel(idx).rows;
+
+  // MED01: an Active prescription -- takenBy already says who, so no further explanation needed.
+  const norvasc = rows.find(r => r.medicine.medicine_id === "MED01");
+  assert.deepEqual(norvasc.takenBy, ["Dad"]);
+  assert.equal(norvasc.takenBefore, false);
+  assert.equal(norvasc.canDelete, false);
+
+  // MED05: only a Stopped prescription -- nobody takes it now, but the row must say why it can't
+  // be deleted rather than showing an empty takenBy with no explanation at all.
+  const vitc = rows.find(r => r.medicine.medicine_id === "MED05");
+  assert.deepEqual(vitc.takenBy, []);
+  assert.equal(vitc.takenBefore, true);
+  assert.equal(vitc.canDelete, false);
+
+  // MED99: never prescribed to anyone -- no current or former taker to explain.
+  const spare = rows.find(r => r.medicine.medicine_id === "MED99");
+  assert.deepEqual(spare.takenBy, []);
+  assert.equal(spare.takenBefore, false);
+  assert.equal(spare.canDelete, true);
+});
+
 test("medicineLibraryDetail gives the five photo slots in order, labelled, blank where empty", () => {
   const idx = libraryIdx();
   const d = medicineLibraryDetail(idx, "MED01");
