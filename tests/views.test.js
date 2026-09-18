@@ -37,6 +37,70 @@ test("renderDetail escapes a malicious doctor name in the doctor card", () => {
   assert.ok(html.includes("HN 0045821"));
 });
 
+// The edit controls are drawn from the grant bootstrap sent (canEditOwner). A viewer with only
+// View must not see a single control -- the server would refuse the write anyway, but a button
+// that always fails is worse than no button.
+const editableModel = (over = {}) => ({
+  prescription: { id: "RX01", meal: "Any time", status: "Active" },
+  medicine: { medicine_id: "MED01", generic_name: "Amlodipine", strength: "5 mg" },
+  doses: [{ timeOfDay: "Morning", amount: 1, unit: "tablet" }],
+  photos: [
+    { label: "Box", slot: "box", url: "https://example.test/box.jpg" },
+    { label: "Packet front", slot: "packet_front", url: "" },
+    { label: "Packet back", slot: "packet_back", url: "" },
+    { label: "Pill front", slot: "pill_front", url: "" },
+    { label: "Pill back", slot: "pill_back", url: "" },
+  ],
+  doctor: null, hospital: null, hn: "", history: [], canDelete: true,
+  ...over,
+});
+
+test("renderDetail shows no editing control at all when the viewer only has View", () => {
+  const html = renderDetail({ model: editableModel(), photo: 0, canEdit: false });
+  for (const attr of ["data-change-dose", "data-change-schedule", "data-stop", "data-restart", "data-delete", "data-edit-medicine", "data-upload-photo", "data-remove-photo"]) {
+    assert.ok(!html.includes(attr), `${attr} must not appear without Edit`);
+  }
+});
+
+test("renderDetail shows the editing controls when the viewer has Edit", () => {
+  const html = renderDetail({ model: editableModel(), photo: 0, canEdit: true });
+  for (const attr of ["data-change-dose=\"RX01\"", "data-change-schedule=\"RX01\"", "data-stop=\"RX01\"", "data-delete=\"RX01\"", "data-edit-medicine=\"MED01\""]) {
+    assert.ok(html.includes(attr), `${attr} is missing`);
+  }
+  assert.ok(!html.includes("data-restart"), "an active prescription offers Stop, not Restart");
+});
+
+test("renderDetail offers Restart, not Stop, for a stopped prescription", () => {
+  const html = renderDetail({ model: editableModel({ prescription: { id: "RX01", meal: "Any time", status: "Stopped" } }), photo: 0, canEdit: true });
+  assert.ok(html.includes('data-restart="RX01"'));
+  assert.ok(!html.includes("data-stop="));
+});
+
+test("renderDetail hides Delete once a dose has been ticked (canDelete false), keeping Stop", () => {
+  const html = renderDetail({ model: editableModel({ canDelete: false }), photo: 0, canEdit: true });
+  assert.ok(!html.includes("data-delete"));
+  assert.ok(html.includes('data-stop="RX01"'));
+});
+
+test("renderDetail gives every photo slot an upload, and only a filled one a remove", () => {
+  const html = renderDetail({ model: editableModel(), photo: 0, canEdit: true });
+  const uploads = html.match(/data-upload-photo="[^"]*"/g) || [];
+  assert.deepEqual(uploads, [
+    'data-upload-photo="MED01|box"',
+    'data-upload-photo="MED01|packet_front"',
+    'data-upload-photo="MED01|packet_back"',
+    'data-upload-photo="MED01|pill_front"',
+    'data-upload-photo="MED01|pill_back"',
+  ]);
+  assert.deepEqual(html.match(/data-remove-photo="[^"]*"/g) || [], ['data-remove-photo="MED01|box"']);
+});
+
+test("renderMeds offers adding a medicine only to someone with Edit", () => {
+  const model = { active: [], stopped: [] };
+  assert.ok(renderMeds({ model, ctx, canEdit: true }).includes("data-add-prescription"));
+  assert.ok(!renderMeds({ model, ctx, canEdit: false }).includes("data-add-prescription"));
+});
+
 test("renderDetail returns a friendly note for a null (not-owned) prescription", () => {
   const html = renderDetail({ model: null, photo: 0 });
   assert.ok(!html.includes("undefined"));

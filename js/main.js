@@ -3,7 +3,7 @@
 import { start, S, ctx, now, SCREENS } from "./app.js";
 import { adoptApiUrlFromLocation } from "./api.js";
 import { bangkokToday } from "./schedule.js";
-import { medsModel, detailModel, doctorsModel, emergencyModel } from "./viewmodel.js";
+import { medsModel, detailModel, doctorsModel, emergencyModel, canEditOwner } from "./viewmodel.js";
 import { renderMeds } from "./views/meds.js";
 import { renderDetail } from "./views/detail.js";
 import { renderDoctors } from "./views/doctors.js";
@@ -11,8 +11,8 @@ import { renderEmergency, renderEmergencyEdit } from "./views/emergency.js";
 import { renderMore } from "./views/more.js";
 
 Object.assign(SCREENS, {
-  meds: () => ({ tab: "meds", body: renderMeds({ model: medsModel(S.idx, S.owner), ctx: ctx() }) }),
-  detail: () => ({ tab: "meds", body: renderDetail({ model: detailModel(S.idx, S.owner, S.detail), photo: S.photo }) }),
+  meds: () => ({ tab: "meds", body: renderMeds({ model: medsModel(S.idx, S.owner), ctx: ctx(), canEdit: canEditOwner(S.idx, S.owner) }) }),
+  detail: () => ({ tab: "meds", body: renderDetail({ model: detailModel(S.idx, S.owner, S.detail), photo: S.photo, canEdit: canEditOwner(S.idx, S.owner) }) }),
   team: () => ({ tab: "team", body: renderDoctors({ rows: doctorsModel(S.idx, S.owner), ctx: ctx() }) }),
   sos: () => {
     const cards = S.pub ? S.cards : (S.boot ? S.boot.emergency : null);

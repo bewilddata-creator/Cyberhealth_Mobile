@@ -18,6 +18,7 @@ const SHELL = [
   "js/format.js",
   "js/icons.js",
   "js/mockphoto.js",
+  "js/photoinput.js",
   "js/views/common.js",
   "js/views/shell.js",
   "js/views/connect.js",
@@ -25,6 +26,7 @@ const SHELL = [
   "js/views/today.js",
   "js/views/meds.js",
   "js/views/detail.js",
+  "js/views/forms.js",
   "js/views/doctors.js",
   "js/views/emergency.js",
   "js/views/more.js"

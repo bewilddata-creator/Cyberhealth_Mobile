@@ -148,12 +148,13 @@ export function weekModel(idx, ownerId, date, today, nowTimeOfDay) {
 
 // ---- Meds, medicine detail, Doctors, Emergency (Task 8) ----
 
+// [column, what the family sees, the slot name the server's photo actions take]
 const PHOTO_FIELDS = [
-  ["photo_box", "Box"],
-  ["photo_packet_front", "Packet front"],
-  ["photo_packet_back", "Packet back"],
-  ["photo_pill_front", "Pill front"],
-  ["photo_pill_back", "Pill back"],
+  ["photo_box", "Box", "box"],
+  ["photo_packet_front", "Packet front", "packet_front"],
+  ["photo_packet_back", "Packet back", "packet_back"],
+  ["photo_pill_front", "Pill front", "pill_front"],
+  ["photo_pill_back", "Pill back", "pill_back"],
 ];
 
 function isFlagActive(v) {
@@ -222,7 +223,7 @@ export function detailModel(idx, ownerId, prescriptionId) {
   if (!p || p.userId !== ownerId) return null;
   const medicine = idx.medicines.get(p.medicineId) || null;
   const doses = prescriptionDoses(idx, prescriptionId);
-  const photos = PHOTO_FIELDS.map(([field, label]) => ({ label, url: medicine ? driveImageUrl(medicine[field]) : "" }));
+  const photos = PHOTO_FIELDS.map(([field, label, slot]) => ({ label, slot, url: medicine ? driveImageUrl(medicine[field]) : "" }));
   const doctor = p.doctorId ? idx.doctors.get(p.doctorId) || null : null;
   const ct = doctor ? careTeamRowFor(idx, ownerId, p.doctorId) : null;
   const hospital = ct ? idx.hospitals.get(ct.hospital_id) || null : null;
@@ -239,7 +240,21 @@ export function detailModel(idx, ownerId, prescriptionId) {
       before: c.before,
       after: c.after,
     }));
-  return { prescription: p, medicine, doses, photos, doctor, hospital, hn, history };
+  // Whether to offer Delete rather than only Stop. A prescription anyone has ever ticked must
+  // keep its history, so the app only offers Delete when nothing was ticked -- for the medicine
+  // added by mistake. idx.ticks only holds the days bootstrap sent (DOSE_LOG_WINDOW_DAYS), so a
+  // much older tick can still make this true; the server checks the whole DoseLog again and
+  // refuses with a message that says so, which is why a wrong answer here is only a button.
+  const canDelete = ![...idx.ticks.values()].some(t => t.prescription_id === prescriptionId);
+  return { prescription: p, medicine, doses, photos, doctor, hospital, hn, history, canDelete };
+}
+
+// Whether to draw an edit button. The grant came from the server inside bootstrap
+// (people[].medicines), and the server checks it again on every write -- so a wrong answer here
+// is a missing or extra button, never a way in.
+export function canEditOwner(idx, ownerId) {
+  const person = idx.people.get(ownerId);
+  return !!person && person.medicines === "Edit";
 }
 
 // The owner's active care team, sorted by doctor name. Scoped to the owner: only CareTeam rows

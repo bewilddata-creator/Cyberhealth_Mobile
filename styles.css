@@ -242,7 +242,7 @@ button.banner.warn{background:var(--yellow-2)}
 .form-row label{font-weight:700;font-size:14px}
 .form-row select,.form-row input[type=date],.form-row input[type=number],.form-row input[type=text],.form-row textarea{border:0;background:var(--sand);border-radius:18px;padding:14px 16px;font-size:16px;width:100%;min-height:48px}
 .form-row textarea{font-size:16px;resize:vertical;min-height:0}
-.dose-line{display:grid;grid-template-columns:1fr 1.5fr;gap:8px}
+.dose-line{display:grid;grid-template-columns:1.2fr 1.5fr;gap:8px}
 .toggles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
 .toggles.days{grid-template-columns:repeat(7,1fr)}
 .toggle{border:1.5px dashed var(--ink-3);background:var(--paper);border-radius:16px;padding:10px 4px;font-weight:700;font-size:13px;min-height:44px;display:grid;place-items:center;text-align:center}
@@ -252,6 +252,20 @@ button.banner.warn{background:var(--yellow-2)}
 .picker button[aria-pressed="true"]{background:var(--ink);color:var(--cream);border-color:var(--ink)}
 .formbtns{display:grid;gap:8px}
 .primary.light.danger{color:var(--alert)}
+/* A form row whose control is a group of checkboxes, not one field: same weight as a <label>. */
+.rowlabel{font-weight:700;font-size:14px}
+/* Seven days across a 320px phone: 7 × 40px + 6 × 4px gap fits the 288px of content width. */
+.daypicks{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
+.daypick{position:relative;display:grid;place-items:center;gap:2px;background:var(--sand);border:1.5px dashed var(--ink-3);border-radius:14px;min-height:56px;padding:4px 0;font-weight:700;font-size:12px;cursor:pointer}
+/* The whole 56px-tall label is the tap target; the box itself just has to be easy to see. */
+.daypick input{width:24px;height:24px;margin:0;accent-color:var(--ink)}
+.daypick:has(input:checked){background:var(--ink);color:var(--cream);border-color:var(--ink)}
+.daypick:has(input:focus-visible){outline:3px solid var(--ink);outline-offset:2px}
+/* The dose rows: the label sits beside the boxes once there is room for it, and above them on a
+   narrow phone, so the amount box never gets squeezed to nothing. */
+.dose-row{grid-template-columns:minmax(0,1fr);align-items:center}
+@media (min-width:360px){.dose-row{grid-template-columns:4.75em minmax(0,1fr);gap:8px}}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 
 /* settings: medicine library photo slots */
 .photorow{display:flex;gap:12px;align-items:center;background:var(--sand);border-radius:22px;padding:10px}

@@ -15,7 +15,39 @@ function historyRow(h) {
     </div></li>`;
 }
 
-export function renderDetail({ model, photo }) {
+// What an editor can do to this prescription. Every label says what happens, not what table it
+// touches. Delete only shows when nothing has ever been ticked against it (model.canDelete): once
+// a dose is recorded, the honest option is Stop, which keeps the record of what was taken.
+function editButtons(model) {
+  const id = model.prescription.id;
+  const medicineId = model.medicine ? model.medicine.medicine_id : "";
+  const stopped = model.prescription.status === "Stopped";
+  return `<div class="formbtns">
+    <button type="button" class="primary light" data-change-dose="${esc(id)}">Change how much to take</button>
+    <button type="button" class="primary light" data-change-schedule="${esc(id)}">Change when to take it</button>
+    ${stopped
+      ? `<button type="button" class="primary light" data-restart="${esc(id)}">Start taking this again</button>`
+      : `<button type="button" class="primary light" data-stop="${esc(id)}">Stop taking this</button>`}
+    ${medicineId ? `<button type="button" class="primary light" data-edit-medicine="${esc(medicineId)}">Edit details</button>` : ""}
+    ${model.canDelete ? `<button type="button" class="primary light danger" data-delete="${esc(id)}">Delete — this was added by mistake</button>` : ""}
+  </div>`;
+}
+
+// One row per photo slot, so a photo can be added or replaced without hunting for the right
+// picture first. The slot name is the one the server's photo actions take (box, pill_front, …).
+function photoSlots(photos, medicineId) {
+  const rows = photos.map(p => `<div class="photorow">
+      <span class="pic">${p.url ? `<img src="${esc(p.url)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : I.meds}</span>
+      <div><strong>${esc(p.label)}</strong>
+        <div class="btnrow">
+          <button type="button" data-upload-photo="${esc(medicineId)}|${esc(p.slot)}">${p.url ? "Replace" : "Add photo"}</button>
+          ${p.url ? `<button type="button" class="danger" data-remove-photo="${esc(medicineId)}|${esc(p.slot)}">Remove</button>` : ""}
+        </div></div></div>`).join("");
+  return `<div class="card"><span class="dash">Photos of this medicine</span>${rows}
+    <p class="sub">A photo of the box and of the pill itself makes this medicine easy to recognise.</p></div>`;
+}
+
+export function renderDetail({ model, photo, canEdit }) {
   const back = `<button class="circle-btn" data-back aria-label="Back to medicines">${I.back}</button>`;
   if (!model) return `<div class="top">${back}<span class="title-sm">Medicine</span><span class="spacer"></span></div><p class="note">This medicine isn't available. Tap Refresh on the More tab.</p>`;
   const { prescription, medicine, doses, photos, doctor, hospital, hn, history } = model;
@@ -40,7 +72,9 @@ export function renderDetail({ model, photo }) {
     <div class="gallery"><div class="shot">${image}</div>
       <div class="picks" role="tablist" aria-label="Photos">${photos.map((p, i) => `<button type="button" role="tab" data-photo="${i}" aria-selected="${i === photo}">${esc(p.label)}</button>`).join("")}</div></div>
     <div class="howcard"><span class="dash dark">How to take</span>${how}</div>
+    ${canEdit ? editButtons(model) : ""}
     ${doctorCard}
+    ${canEdit && medicine ? photoSlots(photos, medicine.medicine_id) : ""}
     <div class="card"><div class="sec-head"><span class="dash">History</span><span class="count">${history.length} ${history.length === 1 ? "entry" : "entries"}</span></div>
       ${history.length ? `<ul class="timeline">${history.map(historyRow).join("")}</ul>` : `<p class="none">No history yet.</p>`}</div>`;
 }
