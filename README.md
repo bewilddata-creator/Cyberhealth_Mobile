@@ -531,11 +531,16 @@ deliberate: taking the row away would leave the older records naming something
 that isn't there any more, and they'd stop reading right. Removing one that
 nothing points at asks you to confirm first, and can't be undone.
 
-One thing worth knowing, so it doesn't look like a bug: adding a doctor here
-puts them in the family's shared doctor list straight away, but the "Who
-prescribed it?" picker on a prescription still offers only that person's own
-care team (the `CareTeam` rows described in Part 1). Putting a doctor on
-somebody's care team is still done in the Sheet for now.
+A doctor you add here can be chosen as the prescriber straight away. The "Who
+prescribed it?" picker, when you start somebody on a medicine or change its
+schedule, lists that person's own care team first — that's who prescribes
+nearly everything, so it stays at the top — and then everybody else in the
+family's shared list, each group A to Z.
+
+What is still done in the Sheet for now is the **care team** itself (the
+`CareTeam` rows described in Part 1): which doctors look after which person,
+at which hospital. That's what the Doctors tab shows, and what decides which
+names sit at the top of that picker.
 
 ---
 
@@ -594,9 +599,9 @@ and make sure the tests are green and there's no uncommitted drift in
 **Still coming** (the app's own "More" screen lists these under "Coming
 soon"), done directly in the Sheet for now:
 
-- Adding hospital numbers and care team entries — including putting a
-  doctor from the shared list onto somebody's care team, which is what the
-  "Who prescribed it?" picker offers.
+- Adding hospital numbers and care team entries — including putting a doctor
+  from the shared list onto somebody's care team, which is what puts them on
+  the Doctors tab and at the top of "Who prescribed it?".
 - Managing `Sharing` rules, and adding family members.
 - Changing your own password from inside the app (without needing a reset
   code).

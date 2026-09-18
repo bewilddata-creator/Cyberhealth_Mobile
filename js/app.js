@@ -335,26 +335,43 @@ function medicineLabelOrder(a, b) {
 function medicineOptions() {
   return [...S.idx.medicines.values()].sort(medicineLabelOrder);
 }
-// The owner's care team, plus whichever doctor this prescription already names even if they have
-// since left it. A doctor missing from the list would come back from the <select> as "" and
-// silently erase who prescribed it -- the change would save, and look fine, with the doctor gone.
-// Deduped by doctor_id: doctorsModel returns one row per care-team row, so a doctor the owner sees
-// at two hospitals would otherwise be listed twice in "Who prescribed it?" -- the same value both
-// times, so nothing saves wrong, but it reads as a broken screen.
+// Everyone who could have prescribed this, in the order they are worth reading: the owner's care
+// team first, then the rest of the family's shared doctor list, then -- only if it is still
+// missing -- whichever doctor the prescription already names. That last one matters: a doctor
+// missing from the list would come back from the <select> as "" and silently erase who prescribed
+// it, and the change would save, and look fine, with the doctor gone.
+// Locale-aware, because these names are often Thai: a raw < compares UTF-16 code units and puts
+// every Thai name in code-point rather than dictionary order. Same comparator the medicine picker
+// uses, for the same reason.
+function byDoctorName(a, b) {
+  return String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base", numeric: true });
+}
 function doctorOptions(doctorId) {
-  const list = [];
+  // The owner's own care team first: that is who prescribed nearly everything, so it stays at the
+  // top of the list where a thumb reaches it. Deduped by doctor_id -- doctorsModel returns one row
+  // per care-team row, so a doctor the owner sees at two hospitals would otherwise be listed twice
+  // (the same value both times, so nothing saves wrong, but it reads as a broken screen).
+  const careTeam = [];
   doctorsModel(S.idx, S.owner).forEach(r => {
     const d = r.doctor;
-    if (d && !list.some(x => x.doctor_id === d.doctor_id)) list.push(d);
+    if (d && !careTeam.some(x => x.doctor_id === d.doctor_id)) careTeam.push(d);
   });
+  careTeam.sort(byDoctorName);
+  // Then every other doctor in the family's shared list. Without these, a doctor added through the
+  // doctors library could never be chosen as the prescriber at all -- the library would record
+  // somebody and then do nothing with them, and the only way to use one would be to hand-edit the
+  // CareTeam tab in the Sheet, which is the very thing this release exists to remove. Presentation
+  // only: every name here is already on this phone, in the same bootstrap that draws the library.
+  const onTeam = new Set(careTeam.map(d => d.doctor_id));
+  const others = [...S.idx.doctors.values()].filter(d => !onTeam.has(d.doctor_id)).sort(byDoctorName);
+  const list = careTeam.concat(others);
   if (doctorId && !list.some(d => d.doctor_id === doctorId)) {
-    const d = S.idx.doctors.get(doctorId);
-    // A doctor_id whose Doctors row has actually been deleted matches no <option> at all, so the
-    // browser falls back to "Not recorded", harvestForm reads "", and the save writes that --
-    // silently erasing who prescribed the medicine. Same silent loss as a doctor who merely left
-    // the care team, with a narrower trigger, so it is closed the same way: an option carrying the
-    // id the prescription actually holds, so saving keeps it instead of wiping it.
-    list.push(d || { doctor_id: doctorId, name: "Not in the doctor list any more" });
+    // The list above already holds every doctor the phone knows about, so getting here means the
+    // Doctors row itself has been deleted from the Sheet. That id would then match no <option> at
+    // all, the browser would fall back to "Not recorded", harvestForm would read "", and the save
+    // would write it -- silently erasing who prescribed the medicine. So it gets an option of its
+    // own, carrying the id the prescription actually holds, and saving keeps it.
+    list.push({ doctor_id: doctorId, name: "Not in the doctor list any more" });
   }
   return list;
 }

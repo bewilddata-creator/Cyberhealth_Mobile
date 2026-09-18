@@ -1517,3 +1517,103 @@ test("every library control is in the click listener's selector list, and each o
     assert.equal(S.screen, screen, `${JSON.stringify(dataset)} should reach ${screen}`);
   }
 });
+
+// ---- Fix round 1: "Who prescribed it?" offers the whole shared doctor list ----
+//
+// The doctor library let the family record a doctor and then did nothing with them: the picker on
+// a prescription was built from the owner's CareTeam rows alone, so a doctor added through the new
+// screen could never be chosen as the prescriber. The only way to use one was to hand-edit the
+// CareTeam tab in the Sheet -- the very thing this release exists to remove.
+//
+// In the fixture both DOC01 and DOC02 are on Dad's care team, so these tests add library-only
+// doctors whose names sort BEFORE both of them. That is deliberate: a flat A-to-Z sort, or the two
+// groups concatenated the wrong way round, would put a library-only doctor first, and the ordering
+// test below would fail.
+
+const doctorNames = () => formModel().doctors.map(d => d.name);
+
+async function withLibraryDoctors() {
+  await fresh();
+  // Appended out of alphabetical order, so the sort WITHIN the second group is pinned too.
+  world.ctx.db.append("Doctors", { doctor_id: "DOC-LIB2", name: "Dr. Bbb Library", specialty: "Skin" });
+  world.ctx.db.append("Doctors", { doctor_id: "DOC-LIB1", name: "Dr. Aaa Library", specialty: "Bones" });
+  await loadBoot();
+  await clickOn({ changeSchedule: "RX01" });
+  assert.equal(S.screen, "scheduleForm");
+}
+
+test("a doctor on the owner's care team is offered as the prescriber", async () => {
+  await withLibraryDoctors();
+  const offered = formModel().doctors;
+  assert.ok(offered.some(d => d.doctor_id === "DOC01"), "Dr. Somchai K. writes RX01 and is on Dad's care team");
+  assert.ok(offered.some(d => d.doctor_id === "DOC02"), "Dr. Anan S. is on Dad's care team too");
+  render();
+  assert.match(root.innerHTML, /value="DOC01" selected/);
+});
+
+// The gap this fix round exists to close.
+test("a doctor who is only in the family's shared list is offered too, and saving keeps them", async () => {
+  await withLibraryDoctors();
+  assert.ok(formModel().doctors.some(d => d.doctor_id === "DOC-LIB1"), "a doctor added in the library must be choosable as the prescriber");
+  render();
+  assert.match(root.innerHTML, /value="DOC-LIB1"/);
+
+  // Not merely listed: chosen, sent, and written to the Sheet.
+  await submitOf(makeForm("schedule", [
+    field("prescriptionId", "RX01"), field("frequency", "Daily"),
+    field("mealTiming", "After meal"), field("doctorId", "DOC-LIB1"), field("reason", ""),
+  ]));
+  assert.equal(lastSent("changePrescriptionSchedule").doctorId, "DOC-LIB1");
+  assert.equal(world.ctx.db.rows("Prescriptions").find(r => r.prescription_id === "RX01").doctor_id, "DOC-LIB1");
+});
+
+test("a doctor the prescription names who has left the care team is still offered, so the save can't erase them", async () => {
+  await withLibraryDoctors();
+  // CT01 is Dad's care-team row for DOC01, who wrote RX01. Deactivate it: DOC01 is off the care
+  // team, but RX01 still names him.
+  world.ctx.db.update("CareTeam", "care_id", "CT01", { active: "FALSE" });
+  await loadBoot();
+  await clickOn({ changeSchedule: "RX01" });
+  const offered = formModel().doctors;
+  assert.ok(offered.some(d => d.doctor_id === "DOC01"), "the doctor the prescription names must still have an <option> to come back as");
+  // He is no longer on the care team, so he belongs after everyone who is.
+  assert.ok(doctorNames().indexOf("Dr. Somchai K.") > doctorNames().indexOf("Dr. Anan S."),
+    `the one still on the care team comes first, got ${JSON.stringify(doctorNames())}`);
+  await submitOf(makeForm("schedule", [
+    field("prescriptionId", "RX01"), field("frequency", "Daily"),
+    field("mealTiming", "After meal"), field("doctorId", "DOC01"), field("reason", ""),
+  ]));
+  assert.equal(world.ctx.db.rows("Prescriptions").find(r => r.prescription_id === "RX01").doctor_id, "DOC01");
+});
+
+// The ordering, pinned exactly. Concatenating the two groups the other way round, or sorting the
+// whole list flat, both put "Dr. Aaa Library" first and fail this.
+test("the owner's own care team comes first, then the rest of the family's list, each A to Z", async () => {
+  await withLibraryDoctors();
+  assert.deepEqual(doctorNames(), [
+    "Dr. Anan S.",      // care team
+    "Dr. Somchai K.",   // care team
+    "Dr. Aaa Library",  // the rest of the shared list
+    "Dr. Bbb Library",
+  ]);
+  const flat = [...doctorNames()].sort();
+  assert.notDeepEqual(doctorNames(), flat, "a flat A-to-Z sort must NOT pass this test, or it pins nothing");
+  // And the screen draws them in that order too.
+  render();
+  const picker = root.innerHTML.match(/<select id="f-doctor"[\s\S]*?<\/select>/)[0];
+  const shown = [...picker.matchAll(/<option value="[^"]*"[^>]*>([^<]*)<\/option>/g)].map(m => m[1]);
+  assert.deepEqual(shown, ["Not recorded", "Dr. Anan S.", "Dr. Somchai K.", "Dr. Aaa Library", "Dr. Bbb Library"]);
+});
+
+// Widening the picker must not show anything the phone was not already holding. The shared lists
+// (Medicines, Hospitals, Doctors, DoctorHospitals) are sent to every logged-in user in full;
+// hospital_numbers and care_team are the per-person rows, and bootstrap filters those -- nothing
+// here touches them.
+test("every doctor the picker offers is one bootstrap already sent this phone", async () => {
+  await withLibraryDoctors();
+  const known = new Set(S.boot.doctors.map(d => d.doctor_id));
+  formModel().doctors.forEach(d => {
+    assert.ok(known.has(d.doctor_id), `${d.doctor_id} is in the picker but not in this phone's own bootstrap`);
+  });
+  assert.equal(formModel().doctors.length, S.boot.doctors.length, "and every doctor it holds, no more and no fewer");
+});
