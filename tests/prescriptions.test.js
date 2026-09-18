@@ -70,6 +70,20 @@ test("validateScheduleFields refuses an unknown frequency and an unknown meal ti
   assert.equal(validateScheduleFields({ frequency: FREQ.DAILY, mealTiming: "Whenever" }).ok, false);
 });
 
+test("a blank time of day says what to pick, not an empty pair of quotes", () => {
+  const r = validateDoses([{ timeOfDay: "", amount: 1, unit: "tablet" }], FREQ.DAILY);
+  assert.equal(r.ok, false);
+  assert.ok(!r.reason.includes('""'), r.reason);
+  assert.match(r.reason, /pick/i);
+});
+
+test("a blank frequency says what to pick, not an empty pair of quotes", () => {
+  const r = validateScheduleFields({ frequency: "" });
+  assert.equal(r.ok, false);
+  assert.ok(!r.reason.includes('""'), r.reason);
+  assert.match(r.reason, /pick/i);
+});
+
 test("the change types match the Sheet's Lists tab exactly", () => {
   assert.deepEqual(CHANGE_TYPES, ["Started", "Dose changed", "Schedule changed", "Stopped", "Restarted", "Corrected"]);
   assert.equal(MAX_REASON_LENGTH, 500);

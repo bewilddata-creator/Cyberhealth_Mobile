@@ -15,7 +15,11 @@ export function validateDoses(doses, frequency) {
   const seen = {};
   for (const raw of list) {
     const timeOfDay = txt(raw && raw.timeOfDay);
-    if (!TIMES_OF_DAY.includes(timeOfDay)) return fail(`"${timeOfDay}" isn't a time of day. Use Morning, Noon, Evening or Bedtime.`);
+    if (!TIMES_OF_DAY.includes(timeOfDay)) {
+      return fail(timeOfDay
+        ? `"${timeOfDay}" isn't a time of day. Use Morning, Noon, Evening or Bedtime.`
+        : "Pick a time of day: Morning, Noon, Evening or Bedtime.");
+    }
     if (seen[timeOfDay]) return fail(`There are two ${timeOfDay} rows. Put the whole ${timeOfDay} amount on one row.`);
     seen[timeOfDay] = true;
     const amount = Number(raw.amount);
@@ -35,10 +39,12 @@ export function validateScheduleFields(fields) {
   const fail = reason => ({ ok: false, reason });
   const frequency = txt(f.frequency);
   if (!Object.values(FREQ).includes(frequency)) {
-    return fail(`"${frequency}" isn't a schedule the app knows. Pick every day, every so many days, certain weekdays, or when needed.`);
+    return fail(frequency
+      ? `"${frequency}" isn't a schedule the app knows. Pick every day, every so many days, certain weekdays, or when needed.`
+      : "Pick a schedule: every day, every so many days, certain weekdays, or when needed.");
   }
   const mealRaw = txt(f.mealTiming) || "Any time";
-  if (!MEAL_TIMING_VALUES.includes(mealRaw)) return fail(`"${mealRaw}" isn't a meal timing the app knows.`);
+  if (!MEAL_TIMING_VALUES.includes(mealRaw)) return fail(`"${mealRaw}" isn't a meal timing the app knows. Pick before meal, after meal, with meal, or any time.`);
 
   let everyNDays = "";
   let countFrom = "";

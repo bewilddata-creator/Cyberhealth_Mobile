@@ -1,6 +1,6 @@
 // All API actions. Pure: every outside effect goes through ctx (see plan Task 3 interface).
 // Synced to Apps Script by scripts/sync-gs.mjs, so keep imports on one line and names unique.
-import { isActiveUser, publicUser, SECTIONS, grantFor, canRead, readableOwners, canTick } from "../js/access.js";
+import { isActiveUser, publicUser, SECTIONS, grantFor, canRead, canEdit, readableOwners, canTick } from "../js/access.js";
 import { MAX_ATTEMPTS, SESSION_DAYS, makePasswordRecord, verifyPassword, passwordProblem, isResetCode, tokenHash } from "../js/authcore.js";
 import { normalizePrescription, normalizeDose, isDue, bangkokToday, bangkokTimeOfDay, bangkokStamp, addDays, parseDate, TIMES_OF_DAY, FREQ, DOSE_LOG_WINDOW_DAYS, dedupeActivePrescriptions, describeSchedule } from "../js/schedule.js";
 import { validateDoses, validateScheduleFields, MAX_REASON_LENGTH } from "../server/prescriptions.js";
@@ -233,7 +233,7 @@ function applyPrescriptionChange(ctx, user, prescriptionId, changeType, mutate, 
   const end = readPrescription(ctx, prescriptionId);
   if (!end) throw new AppError("SERVER", "Something went wrong on the server. Try again.");
   const stamp = bangkokStamp(ctx.nowMs());
-  const doctorId = options.doctorId === undefined ? end.prescription.doctorId : str(options.doctorId);
+  const doctorId = end.prescription.doctorId;
   ctx.db.update("Prescriptions", "prescription_id", prescriptionId, { updated_at: stamp, updated_by: user.user_id });
   ctx.db.append("PrescriptionChanges", {
     change_id: ctx.newId("CH"),
@@ -447,6 +447,150 @@ Object.assign(ACTIONS, {
       const warnings = [];
       const prescriptions = normalizeTab(ctx, "Prescriptions", normalizePrescription, "prescription", warnings);
       return buildCards(ctx, prescriptions, user.user_id, sharing).find(c => c.user_id === user.user_id);
+    });
+  },
+});
+
+// ---- Prescription write actions ----
+// Every prescription write goes through applyPrescriptionChange, inside ctx.lock, so the Sheet
+// and the history can never disagree. DoseLog is never touched here: a dose already taken is a
+// record of what went in someone's mouth, not a setting to be updated.
+function requireEditable(req, ctx, ownerId) {
+  const { user } = requireUser(req, ctx);
+  if (!canEdit(user.user_id, ownerId, SECTIONS.MEDICINES, sharingRows(ctx))) {
+    const owner = activeUsers(ctx).find(u => u.user_id === ownerId);
+    throw new AppError("FORBIDDEN", `Only ${owner ? owner.display_name : "the owner"} — or someone they've shared editing with — can change these medicines.`);
+  }
+  return user;
+}
+
+function activeConflict(ctx, userId, medicineId, exceptId) {
+  return ctx.db.rows("Prescriptions").some(r =>
+    str(r.user_id) === userId && str(r.medicine_id) === medicineId &&
+    str(r.status) === "Active" && str(r.prescription_id) !== exceptId
+  );
+}
+
+function writeDoseRows(ctx, prescriptionId, doses) {
+  ctx.db.remove("PrescriptionDoses", d => str(d.prescription_id) === prescriptionId);
+  doses.forEach(d => ctx.db.append("PrescriptionDoses", {
+    dose_id: ctx.newId("DS"), prescription_id: prescriptionId,
+    time_of_day: d.timeOfDay, amount: String(d.amount), unit: d.unit,
+  }));
+}
+
+Object.assign(ACTIONS, {
+  addPrescription(req, ctx) {
+    const userId = str(req.userId);
+    const user = requireEditable(req, ctx, userId);
+    const medicineId = str(req.medicineId);
+    const schedule = validateScheduleFields(req);
+    if (!schedule.ok) throw new AppError("BAD_INPUT", schedule.reason);
+    const doses = validateDoses(req.doses, schedule.fields.frequency);
+    if (!doses.ok) throw new AppError("BAD_INPUT", doses.reason);
+    const today = bangkokToday(ctx.nowMs());
+    const startedOn = req.startedOn ? parseDate(req.startedOn) : today;
+    if (!startedOn) throw new AppError("BAD_INPUT", "The start date must be a real date.");
+    if (startedOn > today) throw new AppError("BAD_INPUT", "A medicine can't start in the future. Pick today or a day already past.");
+    return ctx.lock(() => {
+      if (!ctx.db.rows("Medicines").some(m => str(m.medicine_id) === medicineId)) {
+        throw new AppError("BAD_INPUT", "That medicine isn't in the list. Add it first.");
+      }
+      if (activeConflict(ctx, userId, medicineId, "")) {
+        throw new AppError("CONFLICT", "This person is already taking that medicine. Change the one they have instead of adding a second.");
+      }
+      const stamp = bangkokStamp(ctx.nowMs());
+      const prescriptionId = ctx.newId("RX");
+      ctx.db.append("Prescriptions", {
+        prescription_id: prescriptionId, user_id: userId, medicine_id: medicineId,
+        frequency: schedule.fields.frequency, every_n_days: schedule.fields.every_n_days,
+        weekdays: schedule.fields.weekdays, count_from: schedule.fields.count_from,
+        meal_timing: schedule.fields.meal_timing, doctor_id: str(req.doctorId),
+        status: "Active", started_on: startedOn, notes: str(req.notes).slice(0, MAX_REASON_LENGTH),
+        created_at: stamp, created_by: user.user_id, updated_at: stamp, updated_by: user.user_id,
+      });
+      writeDoseRows(ctx, prescriptionId, doses.doses);
+      return applyPrescriptionChange(ctx, user, prescriptionId, "Started", () => {}, { reason: req.reason });
+    });
+  },
+
+  changePrescriptionDose(req, ctx) {
+    const prescriptionId = str(req.prescriptionId);
+    const found = ownerOf(ctx, prescriptionId);
+    if (!found) throw new AppError("BAD_INPUT", "That medicine isn't on the list any more. Refresh and try again.");
+    const user = requireEditable(req, ctx, found.ownerId);
+    return ctx.lock(() => {
+      const current = readPrescription(ctx, prescriptionId);
+      if (!current) throw new AppError("BAD_INPUT", "That medicine isn't on the list any more. Refresh and try again.");
+      const doses = validateDoses(req.doses, current.prescription.freq);
+      if (!doses.ok) throw new AppError("BAD_INPUT", doses.reason);
+      return applyPrescriptionChange(ctx, user, prescriptionId, "Dose changed", () => {
+        if (req.doctorId !== undefined) ctx.db.update("Prescriptions", "prescription_id", prescriptionId, { doctor_id: str(req.doctorId) });
+        writeDoseRows(ctx, prescriptionId, doses.doses);
+      }, { reason: req.reason });
+    });
+  },
+
+  changePrescriptionSchedule(req, ctx) {
+    const prescriptionId = str(req.prescriptionId);
+    const found = ownerOf(ctx, prescriptionId);
+    if (!found) throw new AppError("BAD_INPUT", "That medicine isn't on the list any more. Refresh and try again.");
+    const user = requireEditable(req, ctx, found.ownerId);
+    const schedule = validateScheduleFields(req);
+    if (!schedule.ok) throw new AppError("BAD_INPUT", schedule.reason);
+    return ctx.lock(() => {
+      const current = readPrescription(ctx, prescriptionId);
+      if (!current) throw new AppError("BAD_INPUT", "That medicine isn't on the list any more. Refresh and try again.");
+      const doses = validateDoses(current.doses.map(d => ({ timeOfDay: d.timeOfDay, amount: d.amount, unit: d.unit })), schedule.fields.frequency);
+      if (!doses.ok) throw new AppError("BAD_INPUT", doses.reason);
+      return applyPrescriptionChange(ctx, user, prescriptionId, "Schedule changed", () => {
+        const patch = Object.assign({}, schedule.fields);
+        if (req.doctorId !== undefined) patch.doctor_id = str(req.doctorId);
+        ctx.db.update("Prescriptions", "prescription_id", prescriptionId, patch);
+      }, { reason: req.reason });
+    });
+  },
+
+  stopPrescription(req, ctx) {
+    const prescriptionId = str(req.prescriptionId);
+    const found = ownerOf(ctx, prescriptionId);
+    if (!found) throw new AppError("BAD_INPUT", "That medicine isn't on the list any more. Refresh and try again.");
+    const user = requireEditable(req, ctx, found.ownerId);
+    return ctx.lock(() => applyPrescriptionChange(ctx, user, prescriptionId, "Stopped", () => {
+      ctx.db.update("Prescriptions", "prescription_id", prescriptionId, { status: "Stopped" });
+    }, { reason: req.reason }));
+  },
+
+  restartPrescription(req, ctx) {
+    const prescriptionId = str(req.prescriptionId);
+    const found = ownerOf(ctx, prescriptionId);
+    if (!found) throw new AppError("BAD_INPUT", "That medicine isn't on the list any more. Refresh and try again.");
+    const user = requireEditable(req, ctx, found.ownerId);
+    return ctx.lock(() => {
+      const current = readPrescription(ctx, prescriptionId);
+      if (!current) throw new AppError("BAD_INPUT", "That medicine isn't on the list any more. Refresh and try again.");
+      if (activeConflict(ctx, current.prescription.userId, current.prescription.medicineId, prescriptionId)) {
+        throw new AppError("CONFLICT", "There's already a current prescription for this medicine. Stop that one first if you want this one back.");
+      }
+      return applyPrescriptionChange(ctx, user, prescriptionId, "Restarted", () => {
+        ctx.db.update("Prescriptions", "prescription_id", prescriptionId, { status: "Active" });
+      }, { reason: req.reason });
+    });
+  },
+
+  deletePrescription(req, ctx) {
+    const prescriptionId = str(req.prescriptionId);
+    const found = ownerOf(ctx, prescriptionId);
+    if (!found) throw new AppError("BAD_INPUT", "That medicine isn't on the list any more. Refresh and try again.");
+    requireEditable(req, ctx, found.ownerId);
+    return ctx.lock(() => {
+      if (ctx.db.rows("DoseLog").some(r => str(r.prescription_id) === prescriptionId)) {
+        throw new AppError("CONFLICT", "This has doses already recorded against it, so it can only be stopped — that way the record of what was taken stays right.");
+      }
+      ctx.db.remove("PrescriptionDoses", d => str(d.prescription_id) === prescriptionId);
+      ctx.db.remove("PrescriptionChanges", c => str(c.prescription_id) === prescriptionId);
+      ctx.db.remove("Prescriptions", r => str(r.prescription_id) === prescriptionId);
+      return { deleted: true };
     });
   },
 });
