@@ -50,6 +50,13 @@ const WRITE_ACTIONS = [
   ["updateMedicine", t => ({ action: "updateMedicine", token: t, medicineId: "MED01", fields: { generic_name: "Amlodipine besylate" } })],
   ["uploadMedicinePhoto", t => ({ action: "uploadMedicinePhoto", token: t, medicineId: "MED01", slot: "box", dataUrl: TINY_JPEG })],
   ["removeMedicinePhoto", t => ({ action: "removeMedicinePhoto", token: t, medicineId: "MED01", slot: "pill_front" })],
+  // Every fixture medicine (MED01-MED05) is referenced by a prescription, so deleteMedicine needs a
+  // fresh, unreferenced one to act on -- same hazard and same fix as deleteHospital/deleteDoctor
+  // above: this add is SETUP, run (and committed) before `before` is captured, never inside `build`.
+  ["deleteMedicine", (t, medicineId) => ({ action: "deleteMedicine", token: t, medicineId }),
+    (ctx, t) => handle({ action: "addMedicine", token: t, fields: { generic_name: "Temp Medicine" } }, ctx).data.medicine_id],
+  ["uploadDoctorPhoto", t => ({ action: "uploadDoctorPhoto", token: t, doctorId: "DOC01", dataUrl: TINY_JPEG })],
+  ["removeDoctorPhoto", t => ({ action: "removeDoctorPhoto", token: t, doctorId: "DOC01" })],
   ["addHospital", t => ({ action: "addHospital", token: t, fields: { name: "Sunrise Clinic" } })],
   ["updateHospital", t => ({ action: "updateHospital", token: t, hospitalId: "HOS01", fields: { phone: "02-555-0000" } })],
   // Both fixture hospitals (HOS01, HOS02) are referenced elsewhere, so deleteHospital needs a

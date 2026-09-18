@@ -56,3 +56,16 @@ function isSameSlotFile(existingName, slot) {
 function driveViewUrl(fileId) {
   return `https://drive.google.com/file/d/${fileId}/view`;
 }
+
+// One file per doctor, in a folder of the doctor's own -- doctor_id first for the same reason
+// photoFolderName puts medicine_id first: two doctors can share a name, and a folder chosen by
+// name alone would let one doctor's photo replace the other's.
+const DOCTOR_PHOTO_FILE = "portrait";
+
+function doctorPhotoFolderName(doctor) {
+  const d = doctor || {};
+  const id = String(d.doctor_id == null ? "" : d.doctor_id).trim();
+  const name = String(d.name == null ? "" : d.name).trim();
+  const joined = [id, name].filter(Boolean).join(" ").replace(/[\\/]/g, "-").trim().slice(0, 80);
+  return joined || id;
+}

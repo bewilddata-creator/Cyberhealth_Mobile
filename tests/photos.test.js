@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { PHOTO_SLOTS, photoColumn, isPhotoSlot, parseDataUrl, photoFolderName, photoFileName, isSameSlotFile, driveViewUrl, MAX_PHOTO_BYTES } from "../server/photos.js";
+import { PHOTO_SLOTS, photoColumn, isPhotoSlot, parseDataUrl, photoFolderName, photoFileName, isSameSlotFile, driveViewUrl, MAX_PHOTO_BYTES, doctorPhotoFolderName, DOCTOR_PHOTO_FILE } from "../server/photos.js";
 
 test("slots map to the Sheet's photo columns", () => {
   assert.deepEqual(PHOTO_SLOTS, ["box", "packet_front", "packet_back", "pill_front", "pill_back"]);
@@ -63,4 +63,12 @@ test("isSameSlotFile matches an old photo for the slot regardless of extension",
   assert.equal(isSameSlotFile("box-old.jpg", "box"), false);
   assert.equal(isSameSlotFile("packet_front.jpg", "box"), false);
   assert.equal(isSameSlotFile("boxed.jpg", "box"), false);
+});
+
+test("doctorPhotoFolderName puts doctor_id first, so two doctors with one name never share a folder", () => {
+  const a = { doctor_id: "DOC01", name: "Dr. Somchai K." };
+  const b = { doctor_id: "DOC02", name: "Dr. Somchai K." };
+  assert.equal(doctorPhotoFolderName(a), "DOC01 Dr. Somchai K.");
+  assert.notEqual(doctorPhotoFolderName(a), doctorPhotoFolderName(b));
+  assert.equal(doctorPhotoFolderName({ doctor_id: "DOC03", name: "" }), "DOC03");
 });

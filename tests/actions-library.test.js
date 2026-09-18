@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { handle } from "../server/actions.js";
-import { fakeCtx, loginAs } from "./fixtures.js";
+import { fakeCtx, loginAs, withDrive } from "./fixtures.js";
 
 // The libraries are shared family lists with no owner: any logged-in user may edit them, and
 // that is deliberate -- a medicine or a hospital is a fact about the world, not about a person.
@@ -160,4 +160,73 @@ test("setDoctorHospitals refuses a hospital that isn't in the list, and writes n
   assert.equal(r.ok, false);
   assert.equal(r.error.code, "BAD_INPUT");
   assert.equal(ctx.db.rows("DoctorHospitals").filter(dh => dh.doctor_id === "DOC01").length, before, "all or nothing");
+});
+
+const JPEG = "data:image/jpeg;base64,/9j/4AAQSkZJRg==";
+
+test("deleteMedicine removes one nobody has ever been prescribed", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Pim", "pim123");
+  const added = handle({ action: "addMedicine", token, fields: { generic_name: "Losartan", strength: "50 mg", form: "Tablet" } }, ctx);
+  const id = added.data.medicine_id;
+  const r = handle({ action: "deleteMedicine", token, medicineId: id }, ctx);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(ctx.db.rows("Medicines").filter(m => m.medicine_id === id).length, 0);
+});
+
+test("deleteMedicine refuses one someone takes or used to take", () => {
+  const ctx = fakeCtx();
+  const token = loginAs(ctx, "Pim", "pim123");
+  // MED01 is on RX01 (Active); MED05 is on RX06 (Stopped) -- a stopped course is still history.
+  for (const medicineId of ["MED01", "MED05"]) {
+    const r = handle({ action: "deleteMedicine", token, medicineId }, ctx);
+    assert.equal(r.ok, false, medicineId);
+    assert.equal(r.error.code, "CONFLICT", medicineId);
+    assert.equal(ctx.db.rows("Medicines").filter(m => m.medicine_id === medicineId).length, 1, medicineId);
+  }
+});
+
+test("deleteMedicine trashes the photos it had, and a failed trash is a warning not a failure", () => {
+  const ctx = fakeCtx();
+  const drive = withDrive(ctx);
+  const token = loginAs(ctx, "Pim", "pim123");
+  const added = handle({ action: "addMedicine", token, fields: { generic_name: "Losartan", form: "Tablet" } }, ctx);
+  const id = added.data.medicine_id;
+  const up = handle({ action: "uploadMedicinePhoto", token, medicineId: id, slot: "box", dataUrl: JPEG }, ctx);
+  const r = handle({ action: "deleteMedicine", token, medicineId: id }, ctx);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(drive.trashed, [up.data.url]);
+});
+
+test("uploadDoctorPhoto stores the link on the doctor, and replacing trashes the old file", () => {
+  const ctx = fakeCtx();
+  const drive = withDrive(ctx);
+  const token = loginAs(ctx, "Pim", "pim123");
+  const first = handle({ action: "uploadDoctorPhoto", token, doctorId: "DOC01", dataUrl: JPEG }, ctx);
+  assert.equal(first.ok, true, JSON.stringify(first));
+  assert.match(drive.created[0].folderName, /^DOC01 /);
+  assert.equal(ctx.db.rows("Doctors").find(d => d.doctor_id === "DOC01").photo, first.data.url);
+  const second = handle({ action: "uploadDoctorPhoto", token, doctorId: "DOC01", dataUrl: JPEG }, ctx);
+  assert.equal(second.ok, true);
+  assert.deepEqual(drive.trashed, [first.data.url]);
+});
+
+test("removeDoctorPhoto clears the column and trashes the file", () => {
+  const ctx = fakeCtx();
+  const drive = withDrive(ctx);
+  const token = loginAs(ctx, "Pim", "pim123");
+  const up = handle({ action: "uploadDoctorPhoto", token, doctorId: "DOC01", dataUrl: JPEG }, ctx);
+  const r = handle({ action: "removeDoctorPhoto", token, doctorId: "DOC01" }, ctx);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(ctx.db.rows("Doctors").find(d => d.doctor_id === "DOC01").photo, "");
+  assert.deepEqual(drive.trashed, [up.data.url]);
+});
+
+test("a doctor photo must be a JPEG or PNG, and not too big", () => {
+  const ctx = fakeCtx();
+  withDrive(ctx);
+  const token = loginAs(ctx, "Pim", "pim123");
+  assert.equal(handle({ action: "uploadDoctorPhoto", token, doctorId: "DOC01", dataUrl: "data:text/html;base64,PGI+" }, ctx).error.code, "BAD_INPUT");
+  const huge = `data:image/jpeg;base64,${"A".repeat(9 * 1024 * 1024)}`;
+  assert.equal(handle({ action: "uploadDoctorPhoto", token, doctorId: "DOC01", dataUrl: huge }, ctx).error.code, "BAD_INPUT");
 });

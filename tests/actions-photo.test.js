@@ -1,27 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { handle } from "../server/actions.js";
-import { fakeCtx, loginAs } from "./fixtures.js";
+import { fakeCtx, loginAs, withDrive } from "./fixtures.js";
 
 const JPEG = "data:image/jpeg;base64,/9j/4AAQSkZJRg==";
-
-function withDrive(ctx) {
-  const created = [];
-  const trashed = [];
-  ctx.settings = key => (key === "photo_folder_id" ? "FOLDER123" : "");
-  ctx.drive = {
-    // The real one (apps-script/Code.gs) answers false for any folder this script did not make
-    // itself, which under .../auth/drive.file it cannot open at all.
-    canOpen: folderId => folderId === "FOLDER123",
-    put: (folderName, fileName, base64, mimeType) => {
-      const id = `FILE${created.length + 1}`;
-      created.push({ folderName, fileName, base64, mimeType, id });
-      return { id, url: `https://drive.google.com/file/d/${id}/view` };
-    },
-    trash: url => { trashed.push(url); return true; },
-  };
-  return { created, trashed };
-}
 
 test("uploadMedicinePhoto puts the file in the medicine's own folder and stores the link", () => {
   const ctx = fakeCtx();

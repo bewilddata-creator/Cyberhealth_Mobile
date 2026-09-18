@@ -152,3 +152,24 @@ export function loginAs(ctx, name, password) {
   if (!r.ok) throw new Error(`login failed: ${r.error.message}`);
   return r.data.token;
 }
+
+// A fake Drive + Settings for the photo actions: ctx.settings("photo_folder_id") answers
+// "FOLDER123", which ctx.drive.canOpen accepts (the real one, apps-script/Code.gs, answers false
+// for any folder this script did not make itself, which under .../auth/drive.file it cannot open
+// at all). put() and trash() are recorded so tests can assert on them. Shared by every test file
+// that exercises a photo action -- do not copy this, or the two fakes will drift apart.
+export function withDrive(ctx) {
+  const created = [];
+  const trashed = [];
+  ctx.settings = key => (key === "photo_folder_id" ? "FOLDER123" : "");
+  ctx.drive = {
+    canOpen: folderId => folderId === "FOLDER123",
+    put: (folderName, fileName, base64, mimeType) => {
+      const id = `FILE${created.length + 1}`;
+      created.push({ folderName, fileName, base64, mimeType, id });
+      return { id, url: `https://drive.google.com/file/d/${id}/view` };
+    },
+    trash: url => { trashed.push(url); return true; },
+  };
+  return { created, trashed };
+}

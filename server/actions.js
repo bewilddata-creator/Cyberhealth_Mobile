@@ -4,7 +4,7 @@ import { isActiveUser, publicUser, SECTIONS, grantFor, canRead, canEdit, readabl
 import { MAX_ATTEMPTS, SESSION_DAYS, makePasswordRecord, verifyPassword, passwordProblem, isResetCode, tokenHash } from "../js/authcore.js";
 import { normalizePrescription, normalizeDose, isDue, bangkokToday, bangkokTimeOfDay, bangkokStamp, addDays, parseDate, TIMES_OF_DAY, FREQ, DOSE_LOG_WINDOW_DAYS, dedupeActivePrescriptions, describeSchedule, medicineNameParts } from "../js/schedule.js";
 import { validateDoses, validateScheduleFields, dosesWithMedicineUnit, MAX_REASON_LENGTH } from "../server/prescriptions.js";
-import { isPhotoSlot, photoColumn, parseDataUrl, photoFolderName, photoFileName, MAX_PHOTO_BYTES } from "../server/photos.js";
+import { isPhotoSlot, photoColumn, parseDataUrl, photoFolderName, photoFileName, MAX_PHOTO_BYTES, PHOTO_SLOTS, doctorPhotoFolderName, DOCTOR_PHOTO_FILE } from "../server/photos.js";
 
 export class AppError extends Error {
   constructor(code, message) { super(message); this.code = code; }
@@ -866,6 +866,78 @@ Object.assign(ACTIONS, {
       ctx.db.remove("Doctors", d => str(d.doctor_id) === doctorId);
       return { deleted: true };
     });
+  },
+
+  deleteMedicine(req, ctx) {
+    requireUser(req, ctx);
+    const medicineId = str(req.medicineId);
+    const doomed = ctx.lock(() => {
+      const row = ctx.db.rows("Medicines").find(m => str(m.medicine_id) === medicineId);
+      if (!row) throw new AppError("BAD_INPUT", "That medicine isn't in the list any more. Refresh and try again.");
+      const held = referencesTo(ctx, [
+        { tab: "Prescriptions", column: "medicine_id", value: medicineId, label: "someone's medicines" },
+      ]);
+      if (held.length) {
+        throw new AppError("CONFLICT", "Someone takes this medicine, or used to, so it stays in the list. That keeps their record readable.");
+      }
+      const urls = PHOTO_SLOTS.map(slot => str(row[photoColumn(slot)])).filter(Boolean);
+      ctx.db.remove("Medicines", m => str(m.medicine_id) === medicineId);
+      return urls;
+    });
+    const warnings = [];
+    if (doomed.some(url => !ctx.drive.trash(url))) {
+      warnings.push("The medicine was removed, but some of its photos are still in Drive. You can delete them there.");
+    }
+    return { deleted: true, warnings };
+  },
+
+  uploadDoctorPhoto(req, ctx) {
+    const { user } = requireUser(req, ctx);
+    const doctorId = str(req.doctorId);
+    const parsed = parseDataUrl(req.dataUrl);
+    if (!parsed) throw new AppError("BAD_INPUT", "That photo has to be a JPEG or PNG image.");
+    if (parsed.bytes > MAX_PHOTO_BYTES) throw new AppError("BAD_INPUT", "That photo is too big. Try taking it again.");
+    const rootId = ctx.settings("photo_folder_id");
+    if (rootId && !ctx.drive.canOpen(rootId)) {
+      throw new AppError("BAD_INPUT", "The app can't open the photo folder set up in the Sheet, so the photo wasn't saved. Ask whoever set up the Sheet to empty the photo_folder_id box on the Settings tab and then run setUpPhotoFolder.");
+    }
+    const doctor = ctx.db.rows("Doctors").find(d => str(d.doctor_id) === doctorId);
+    if (!doctor) throw new AppError("BAD_INPUT", "That doctor isn't in the list any more. Refresh and try again.");
+    const fileName = `${DOCTOR_PHOTO_FILE}.${parsed.mimeType === "image/png" ? "png" : "jpg"}`;
+    const created = ctx.drive.put(doctorPhotoFolderName(doctor), fileName, parsed.base64, parsed.mimeType);
+    const previous = ctx.lock(() => {
+      const row = ctx.db.rows("Doctors").find(d => str(d.doctor_id) === doctorId);
+      if (!row) throw new AppError("BAD_INPUT", "That doctor isn't in the list any more. Refresh and try again.");
+      const before = str(row.photo);
+      ctx.db.update("Doctors", "doctor_id", doctorId, {
+        photo: created.url, updated_at: bangkokStamp(ctx.nowMs()), updated_by: user.user_id,
+      });
+      return before;
+    });
+    const warnings = [];
+    if (previous && previous !== created.url && !ctx.drive.trash(previous)) {
+      warnings.push("The photo was saved, but the old one is still in Drive. You can delete it there.");
+    }
+    return { url: created.url, warnings };
+  },
+
+  removeDoctorPhoto(req, ctx) {
+    const { user } = requireUser(req, ctx);
+    const doctorId = str(req.doctorId);
+    const previous = ctx.lock(() => {
+      const row = ctx.db.rows("Doctors").find(d => str(d.doctor_id) === doctorId);
+      if (!row) throw new AppError("BAD_INPUT", "That doctor isn't in the list any more. Refresh and try again.");
+      const before = str(row.photo);
+      ctx.db.update("Doctors", "doctor_id", doctorId, {
+        photo: "", updated_at: bangkokStamp(ctx.nowMs()), updated_by: user.user_id,
+      });
+      return before;
+    });
+    const warnings = [];
+    if (previous && !ctx.drive.trash(previous)) {
+      warnings.push("The photo was removed from the app, but the file is still in Drive. You can delete it there.");
+    }
+    return { warnings };
   },
 
   // Replaces the whole set for one doctor, so the form can send what the user ticked without
