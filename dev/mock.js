@@ -18,12 +18,55 @@ export function fakeSha256(bytes) {
   return out;
 }
 
-// Release 1 has no fake Drive photos (that's release 2's photo upload feature) -- js/api.js
-// always wires this in as the mock backend's photo resolver, so it must exist and just says
-// "no photo" for every reference rather than leaving js/mockphoto.js's resolver undefined.
-export function mockPhotoUrl(ref) {
-  return "";
+// The fake Drive. server/actions.js's photo actions need a ctx.drive and a ctx.settings, so
+// without this the photo buttons throw in mock mode and cannot be tried locally at all.
+// drive.put stores what the phone uploaded under a "mock:photo:<id>" reference and writes that
+// reference into the Medicines row, exactly where a real Drive link would go; js/api.js wires
+// mockPhotoUrl in as js/mockphoto.js's resolver, which is how js/viewmodel.js's driveImageUrl
+// turns the reference back into something an <img> can show. Kept in localStorage alongside the
+// tables so a reload still shows the photo; a quota error just means this session only.
+const PHOTOS_KEY = KEY + ".photos";
+let photos = null;
+const trashed = [];
+
+function loadPhotos() {
+  try { photos = JSON.parse(localStorage.getItem(PHOTOS_KEY) || "{}"); } catch (e) { photos = {}; }
+  if (!photos || typeof photos !== "object") photos = {};
 }
+function savePhotos() {
+  try { localStorage.setItem(PHOTOS_KEY, JSON.stringify(photos)); } catch (e) { /* quota: memory only */ }
+}
+
+export function mockPhotoUrl(ref) {
+  if (!photos) loadPhotos();
+  return photos[String(ref == null ? "" : ref)] || "";
+}
+// What a real Drive would have moved to the bin, for the browser walk to check.
+export function mockDriveTrashed() {
+  return trashed.slice();
+}
+
+const mockDrive = {
+  put(folderName, fileName, base64, mimeType) {
+    if (!photos) loadPhotos();
+    const id = `${folderName}/${fileName}#${Date.now().toString(36)}`;
+    const url = `mock:photo:${id}`;
+    photos[url] = `data:${mimeType};base64,${base64}`;
+    savePhotos();
+    return { id, url };
+  },
+  // Answers the way DriveStore.trashByUrl does: false when there is nothing there to bin, which
+  // is what makes the server's "the old one is still in Drive" warning reachable in mock mode.
+  trash(url) {
+    if (!photos) loadPhotos();
+    const key = String(url == null ? "" : url);
+    trashed.push(key);
+    if (!Object.prototype.hasOwnProperty.call(photos, key)) return false;
+    delete photos[key];
+    savePhotos();
+    return true;
+  },
+};
 
 let tables = null;
 const sessions = new Map();
@@ -65,6 +108,12 @@ export async function mockCall(req) {
     nowMs: () => Date.now(),
     lock: fn => fn(),
     log: e => console.error(e),
+    // Same read as apps-script/Drive.gs's SheetSettings.get, off the sample Settings tab.
+    settings: key => {
+      const row = db.rows("Settings").find(r => String(r.key || "").trim() === key);
+      return row ? String(row.value || "").trim() : "";
+    },
+    drive: mockDrive,
   };
   await new Promise(r => setTimeout(r, 300)); // feel like a real network round trip
   const reply = handle(req, ctx);
