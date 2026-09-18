@@ -4,11 +4,12 @@
 // apps-script/appsscript.json ("oauthScopes"), so the consent screen the family sees is fixed and
 // reviewable instead of whatever Apps Script's automatic scope scan happens to infer from the code:
 //   * .../auth/spreadsheets.currentonly -- this one spreadsheet only, never any other Sheet.
-//   * .../auth/drive -- the pill photos. Drive.gs opens the photo folder BY ID (a folder the
-//     family made by hand and pasted into Settings.photo_folder_id), then creates files in it,
-//     shares them link-readable and trashes replaced ones. The narrower .../auth/drive.file grants
-//     access only to files the script itself created or the user picked through Google Picker, so
-//     it cannot open that hand-made folder at all -- see README Part 2.
+//   * .../auth/drive.file -- the pill photos, and ONLY the files this script made itself. It
+//     makes its own photo folder (setUpPhotoFolder in Drive.gs, or the first upload), a
+//     subfolder per medicine inside it, and the photo files, shares those link-readable, and
+//     trashes the ones it replaces. Nothing else in the family's Drive is reachable at all --
+//     not even a folder they made by hand and pasted into Settings.photo_folder_id. See
+//     README Part 2.
 //
 // There used to be an OnlyCurrentDoc annotation on this line. It is deliberately GONE, and must
 // not be put back: that annotation only steers the automatic scan, which an explicit "oauthScopes"
@@ -53,8 +54,15 @@ function liveCtx_() {
     log: err => console.error(err && err.stack ? err.stack : err),
     settings: key => SheetSettings.get(key),
     drive: {
+      // Can this script open the folder whose id the Sheet holds? Only a folder it made itself,
+      // under .../auth/drive.file -- so this is false for the hand-made folder older setups
+      // pasted in, which is what lets uploadMedicinePhoto say so plainly instead of failing
+      // with a Drive error nobody can read.
+      canOpen: folderId => !!PhotoFolder.open(folderId),
+      // A blank photo_folder_id makes the folder here, rather than failing: whoever is holding
+      // the phone should not have to know that an admin never ran setUpPhotoFolder.
       put: (folderName, fileName, base64, mimeType) =>
-        DriveStore.putImage(SheetSettings.get("photo_folder_id"), folderName, fileName, base64, mimeType),
+        DriveStore.putImage(PhotoFolder.ensureId(), folderName, fileName, base64, mimeType),
       trash: url => DriveStore.trashByUrl(url),
     },
   };

@@ -195,10 +195,15 @@ function checkSheet() {
     else seenNames[name] = u.user_id;
   });
 
-  // Settings: photos are release 2, but the family can fill this in now.
+  // Settings: an empty photo_folder_id is no longer a problem -- setUpPhotoFolder fills it in,
+  // and so does the first photo anyone adds. The problem worth reporting is the opposite one: an
+  // id that IS filled in and that the app cannot open. The app may only touch folders it made
+  // itself, so a folder made by hand and pasted in here is invisible to it, and every photo
+  // upload will refuse until the box is emptied and setUpPhotoFolder has been run.
   const folderSetting = rowsOf("Settings").find(row => String(row.key || "").trim() === "photo_folder_id");
-  if (!folderSetting || !String(folderSetting.value || "").trim()) {
-    problems.push("Settings: photo_folder_id is empty (needed from release 2).");
+  const folderId = folderSetting ? String(folderSetting.value || "").trim() : "";
+  if (folderId && !PhotoFolder.open(folderId)) {
+    problems.push(`Settings: the app cannot open the photo folder in photo_folder_id ("${folderId}"). Empty that box on the Settings tab, then run setUpPhotoFolder to make a folder the app can use.`);
   }
 
   // Sharing: section and access are typed by hand, so a typo here silently grants nothing.

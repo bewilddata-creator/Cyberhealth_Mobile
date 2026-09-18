@@ -34,13 +34,18 @@ test("appsscript.json declares exactly the OAuth scopes this project needs, and 
   assert.deepEqual(manifest.oauthScopes, [
     // SpreadsheetApp.getActive(), and nothing but this one bound spreadsheet.
     "https://www.googleapis.com/auth/spreadsheets.currentonly",
-    // DriveApp: opening the family's photo folder BY ID (so drive.file, which only covers files
-    // the script created or the user picked, is not enough), creating files in it, sharing them
-    // link-readable, trashing replaced ones.
-    "https://www.googleapis.com/auth/drive",
+    // DriveApp, and ONLY the files this script made itself: its own photo folder
+    // (setUpPhotoFolder, or the first upload), a subfolder per medicine inside it, the photo
+    // files, sharing those link-readable and trashing the ones it replaces. Never the wider
+    // .../auth/drive -- "see, edit, create, and delete ALL of your Google Drive files" is not
+    // something an ANYONE_ANONYMOUS web app should be carrying around.
+    "https://www.googleapis.com/auth/drive.file",
   ]);
   // Nothing in the project makes an outbound HTTP request or sends mail, so neither scope belongs.
   assert.equal(manifest.oauthScopes.some(s => /external_request|mail|send/.test(s)), false);
+  // Spelled out separately from the deepEqual above, because this is the one that would hurt:
+  // the family revoked the wide grant, and a stray edit putting it back would re-prompt them.
+  assert.equal(manifest.oauthScopes.includes("https://www.googleapis.com/auth/drive"), false);
   assert.equal(manifest.timeZone, "Asia/Bangkok");
 });
 
@@ -64,7 +69,7 @@ function loadGs() {
 
 test("every apps-script/*.gs file loads into one global scope without name clashes", () => {
   const context = loadGs();
-  for (const name of ["doPost", "doGet", "checkSheet", "handle", "isDue", "verifyPassword", "canTick"]) {
+  for (const name of ["doPost", "doGet", "checkSheet", "setUpPhotoFolder", "handle", "isDue", "verifyPassword", "canTick"]) {
     assert.equal(vm.runInContext(`typeof ${name}`, context), "function", name);
   }
   assert.equal(vm.runInContext('handle({ action: "nope" }, {}).error.code', context), "BAD_INPUT");

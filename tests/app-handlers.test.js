@@ -142,6 +142,7 @@ function newWorld() {
   const trashed = [];
   ctx.settings = key => (key === "photo_folder_id" ? "FOLDER123" : "");
   ctx.drive = {
+    canOpen: folderId => folderId === "FOLDER123",
     put: (folderName, fileName, base64, mimeType) => {
       created.push({ folderName, fileName, mimeType });
       return { id: `FILE${created.length}`, url: `https://drive.google.com/file/d/FILE${created.length}/view` };

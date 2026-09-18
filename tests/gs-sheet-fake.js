@@ -137,6 +137,11 @@ export const fakeContentService = {
 // photo_folder_id holds ("SAMPLE_FOLDER_ID" in tests/fixtures.js). Folders and files are kept
 // on the returned object (.folders, .files) so a test can see exactly what was created,
 // shared and trashed. Only the calls apps-script/Drive.gs makes are implemented.
+//
+// Pass null for rootId to get a Drive where that folder does NOT exist -- which is what the
+// .../auth/drive.file scope looks like from inside the script for any folder it did not make
+// itself: getFolderById throws rather than handing one back. That is both the "nothing is set
+// up yet" case and the "the id in Settings points at a folder made by hand" case.
 export function fakeDriveApp(rootId = "SAMPLE_FOLDER_ID") {
   const folders = new Map();
   const files = new Map();
@@ -177,12 +182,19 @@ export function fakeDriveApp(rootId = "SAMPLE_FOLDER_ID") {
     return folder;
   }
 
-  folders.set(rootId, makeFolder(rootId, "CyberHealth photos", null));
+  if (rootId) folders.set(rootId, makeFolder(rootId, "CyberHealth photos", null));
   return {
     folders,
     files,
     Access: { ANYONE_WITH_LINK: "ANYONE_WITH_LINK" },
     Permission: { VIEW: "VIEW" },
+    // DriveApp.createFolder: a new folder at the top level of My Drive. Always allowed under
+    // drive.file -- making a file is exactly what that scope is for.
+    createFolder(name) {
+      const folder = makeFolder(driveId("FOLDER", ++seq), name, null);
+      folders.set(folder.id, folder);
+      return folder;
+    },
     getFolderById(id) {
       const folder = folders.get(id);
       if (!folder) throw new Error(`fake Drive: no folder with id ${id}`); // same shape as DriveApp: it throws, it does not return null

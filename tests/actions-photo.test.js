@@ -10,6 +10,9 @@ function withDrive(ctx) {
   const trashed = [];
   ctx.settings = key => (key === "photo_folder_id" ? "FOLDER123" : "");
   ctx.drive = {
+    // The real one (apps-script/Code.gs) answers false for any folder this script did not make
+    // itself, which under .../auth/drive.file it cannot open at all.
+    canOpen: folderId => folderId === "FOLDER123",
     put: (folderName, fileName, base64, mimeType) => {
       const id = `FILE${created.length + 1}`;
       created.push({ folderName, fileName, base64, mimeType, id });
@@ -104,12 +107,30 @@ test("a medicine deleted while the photo was uploading fails the save instead of
   assert.equal(drive.trashed.length, 0, "nothing of anyone else's is trashed on the way out");
 });
 
-test("uploading with no photo folder configured says so in plain words", () => {
+test("uploading before anyone set a photo folder up still works: the folder is made on the way", () => {
   const ctx = fakeCtx();
-  withDrive(ctx);
+  const drive = withDrive(ctx);
   ctx.settings = () => "";
   const token = loginAs(ctx, "Pim", "pim123");
   const r = handle({ action: "uploadMedicinePhoto", token, medicineId: "MED01", slot: "box", dataUrl: JPEG }, ctx);
-  assert.equal(r.ok, false);
-  assert.match(r.error.message, /folder/i);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(drive.created.length, 1, "the adapter was asked for the folder, not refused before it got there");
+  assert.equal(ctx.db.rows("Medicines").find(m => m.medicine_id === "MED01").photo_box, r.data.url);
+});
+
+test("uploading when the folder id in Settings cannot be opened refuses, and makes no second folder", () => {
+  const ctx = fakeCtx();
+  const drive = withDrive(ctx);
+  // The id of a folder somebody made by hand and pasted in. Under .../auth/drive.file the app
+  // cannot open it, and quietly making a new one would leave the family with two folders and
+  // no idea which one holds their photos.
+  ctx.settings = key => (key === "photo_folder_id" ? "MADE_BY_HAND" : "");
+  const token = loginAs(ctx, "Pim", "pim123");
+  const r = handle({ action: "uploadMedicinePhoto", token, medicineId: "MED01", slot: "box", dataUrl: JPEG }, ctx);
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.equal(r.error.code, "BAD_INPUT");
+  assert.match(r.error.message, /photo_folder_id/);
+  assert.match(r.error.message, /setUpPhotoFolder/);
+  assert.equal(drive.created.length, 0, "nothing reached Drive");
+  assert.equal(ctx.db.rows("Medicines").find(m => m.medicine_id === "MED01").photo_box, "", "and nothing reached the Sheet");
 });

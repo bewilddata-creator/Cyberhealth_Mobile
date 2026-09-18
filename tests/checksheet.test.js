@@ -8,7 +8,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import vm from "node:vm";
 import { fixtureTables, fakeCtx, loginAs } from "./fixtures.js";
-import { fakeSpreadsheetApp } from "./gs-sheet-fake.js";
+import { fakeSpreadsheetApp, fakeDriveApp } from "./gs-sheet-fake.js";
 import { handle } from "../server/actions.js";
 
 function loadGs() {
@@ -19,9 +19,13 @@ function loadGs() {
   return context;
 }
 
-function runCheckSheet(tables, columnsByTab) {
+// drive is the fake DriveApp checkSheet should see. The default one owns SAMPLE_FOLDER_ID, the
+// folder id the fixture's Settings tab holds -- i.e. a Sheet whose photo folder the app made
+// itself and can still open. Pass fakeDriveApp(null) for a Drive where it cannot.
+function runCheckSheet(tables, columnsByTab, drive) {
   const context = loadGs();
   context.SpreadsheetApp = fakeSpreadsheetApp(tables, columnsByTab || tables.__columns);
+  context.DriveApp = drive || fakeDriveApp();
   // checkSheet() builds its array inside the vm realm, whose Array is a different
   // constructor than this file's -- deepEqual against a host-realm [] would otherwise fail
   // on prototype identity alone. Round-tripping through JSON gives back a plain host array.
@@ -181,11 +185,38 @@ test("checkSheet names an emergency card whose user_id is not in Users", () => {
   assert.ok(problems.some(p => p.includes("EmergencyCards") && p.includes("U99") && p.includes("Users")), problems.join("\n"));
 });
 
-test("checkSheet reports an empty photo_folder_id as needed from release 2", () => {
+test("checkSheet says nothing about an empty photo_folder_id: setUpPhotoFolder fills it in", () => {
   const tables = clone(fixtureTables());
   tables.Settings = tables.Settings.map(r => (r.key === "photo_folder_id" ? { ...r, value: "" } : r));
+  // Deliberately no DriveApp in the context at all: a blank id must never be looked up, so
+  // checkSheet must get through this without touching Drive even once.
+  const context = loadGs();
+  context.SpreadsheetApp = fakeSpreadsheetApp(tables);
+  const problems = JSON.parse(JSON.stringify(vm.runInContext("checkSheet()", context)));
+  assert.deepEqual(problems, []);
+});
+
+test("checkSheet reports a photo_folder_id the app cannot open, and says how to fix it", () => {
+  const tables = clone(fixtureTables());
+  tables.Settings = tables.Settings.map(r => (r.key === "photo_folder_id" ? { ...r, value: "MADE_BY_HAND" } : r));
   const problems = runCheckSheet(tables);
-  assert.ok(problems.some(p => p.includes("photo_folder_id") && p.includes("release 2")), problems.join("\n"));
+  assert.equal(problems.length, 1, problems.join("\n"));
+  assert.match(problems[0], /photo_folder_id/);
+  assert.match(problems[0], /MADE_BY_HAND/);
+  assert.match(problems[0], /setUpPhotoFolder/);
+});
+
+test("checkSheet still never writes to the Sheet while checking the photo folder", () => {
+  const tables = clone(fixtureTables());
+  const context = loadGs();
+  const spreadsheetApp = fakeSpreadsheetApp(tables);
+  context.SpreadsheetApp = spreadsheetApp;
+  context.DriveApp = fakeDriveApp(null); // the folder is unreachable, the worst case
+  const settings = spreadsheetApp.getActive().getSheetByName("Settings");
+  const before = JSON.stringify(settings.grid);
+  const problems = JSON.parse(JSON.stringify(vm.runInContext("checkSheet()", context)));
+  assert.equal(problems.length, 1, problems.join("\n"));
+  assert.equal(JSON.stringify(settings.grid), before, "reporting the problem must not fix it behind the admin's back");
 });
 
 test("checkSheet accepts a Sheet after the app has added a prescription and a medicine through it", () => {

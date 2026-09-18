@@ -662,8 +662,15 @@ Object.assign(ACTIONS, {
     const parsed = parseDataUrl(req.dataUrl);
     if (!parsed) throw new AppError("BAD_INPUT", "That photo has to be a JPEG or PNG image.");
     if (parsed.bytes > MAX_PHOTO_BYTES) throw new AppError("BAD_INPUT", "That photo is too big. Try taking it again.");
+    // A blank photo_folder_id is fine now: ctx.drive.put makes the folder itself, the same one
+    // setUpPhotoFolder makes. An id that IS set but cannot be opened is not fine -- that is the
+    // hand-made folder older setups pasted in, which the app is no longer allowed to touch, and
+    // making a second folder instead would leave the family with two and no idea which one
+    // their photos went into. Say what to do, and save nothing.
     const rootId = ctx.settings("photo_folder_id");
-    if (!rootId) throw new AppError("BAD_INPUT", "No photo folder is set up yet. Ask whoever set up the Sheet to add one.");
+    if (rootId && !ctx.drive.canOpen(rootId)) {
+      throw new AppError("BAD_INPUT", "The app can't open the photo folder set up in the Sheet, so the photo wasn't saved. Ask whoever set up the Sheet to empty the photo_folder_id box on the Settings tab and then run setUpPhotoFolder.");
+    }
     const medicine = ctx.db.rows("Medicines").find(m => str(m.medicine_id) === medicineId);
     if (!medicine) throw new AppError("BAD_INPUT", "That medicine isn't in the list any more. Refresh and try again.");
     const created = ctx.drive.put(photoFolderName(medicine), photoFileName(slot, parsed.mimeType), parsed.base64, parsed.mimeType);

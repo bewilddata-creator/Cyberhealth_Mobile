@@ -47,6 +47,11 @@ export function mockDriveTrashed() {
 }
 
 const mockDrive = {
+  // The real one (apps-script/Code.gs) answers false for a folder the app did not make itself.
+  // Mock mode has no Drive at all, so every folder id the sample Settings tab holds is fine.
+  canOpen() {
+    return true;
+  },
   put(folderName, fileName, base64, mimeType) {
     if (!photos) loadPhotos();
     const id = `${folderName}/${fileName}#${Date.now().toString(36)}`;

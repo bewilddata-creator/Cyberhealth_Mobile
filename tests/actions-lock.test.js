@@ -22,6 +22,7 @@ function world() {
   const ctx = fakeCtx();
   ctx.settings = key => (key === "photo_folder_id" ? "FOLDER123" : "");
   ctx.drive = {
+    canOpen: folderId => folderId === "FOLDER123",
     put: () => ({ id: "FILE1", url: "https://drive.google.com/file/d/FILE1/view" }),
     trash: () => true,
   };

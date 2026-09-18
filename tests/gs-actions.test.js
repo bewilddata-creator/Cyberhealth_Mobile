@@ -23,15 +23,23 @@ function loadGs() {
 // Every Google service liveCtx_() (apps-script/Code.gs) reaches for. The Sheet starts as the
 // shared v2 fixture, whose Settings tab points photo_folder_id at SAMPLE_FOLDER_ID -- the same
 // id fakeDriveApp() gives its root folder.
-function installFakes(context, tables = fixtureTables()) {
+function installFakes(context, tables = fixtureTables(), drive = fakeDriveApp()) {
   context.SpreadsheetApp = fakeSpreadsheetApp(tables);
   context.PropertiesService = fakePropertiesService();
   context.CacheService = fakeCacheService();
   context.LockService = fakeLockService;
   context.Utilities = fakeUtilities;
   context.ContentService = fakeContentService;
-  context.DriveApp = fakeDriveApp();
+  context.DriveApp = drive;
   return context;
+}
+
+// The fixture Settings tab with its photo_folder_id emptied -- a family that has never run
+// setUpPhotoFolder, and a Drive with no CyberHealth folder in it yet.
+function tablesWithNoPhotoFolder(value = "") {
+  const tables = fixtureTables();
+  tables.Settings = tables.Settings.map(r => (r.key === "photo_folder_id" ? { ...r, value } : r));
+  return tables;
 }
 
 function post(context, body) {
@@ -219,6 +227,135 @@ test("a photo for a medicine that is not in the Sheet is refused before anything
   assert.equal(r.ok, false);
   assert.equal(r.error.code, "BAD_INPUT");
   assert.equal(context.DriveApp.files.size, 0, "no orphan file is left in the family's Drive");
+});
+
+// ---- the photo folder the app makes for itself ----
+//
+// apps-script/appsscript.json asks for .../auth/drive.file, which reaches only the files and
+// folders this script made itself. So the app makes its own photo folder instead of being given
+// the id of one somebody made by hand, and these tests drive the real .gs through both the
+// admin's entry point (setUpPhotoFolder) and the phone's (uploadMedicinePhoto).
+
+// Runs a top-level function with console.log captured, and hands back everything it printed.
+function runLogging(context, fnName) {
+  const printed = [];
+  const realConsole = context.console;
+  context.console = { log: (...args) => printed.push(args.join(" ")), error: () => {} };
+  try {
+    vm.runInContext(fnName, context)();
+  } finally {
+    context.console = realConsole;
+  }
+  return printed.join("\n");
+}
+
+function settingValue(context, key) {
+  const row = gridRows(context, "Settings").find(r => r.key === key);
+  return row ? row.value : undefined;
+}
+
+test("setUpPhotoFolder makes the folder, writes its id into Settings, and says where it is", () => {
+  const context = loadGs();
+  installFakes(context, tablesWithNoPhotoFolder(), fakeDriveApp(null));
+  const log = runLogging(context, "setUpPhotoFolder");
+
+  const made = [...context.DriveApp.folders.values()];
+  assert.equal(made.length, 1, "exactly one folder, at the top level of My Drive");
+  assert.equal(made[0].getName(), "CyberHealth Photos");
+  assert.equal(made[0].parentId, null);
+  assert.equal(settingValue(context, "photo_folder_id"), made[0].getId(), "the admin never has to copy the id");
+  assert.match(log, /CyberHealth Photos/);
+  assert.ok(log.includes(`https://drive.google.com/drive/folders/${made[0].getId()}`), log);
+  assert.match(log, /move it|drag the folder/i, "the admin is told they may move it");
+});
+
+test("setUpPhotoFolder adds the photo_folder_id row when the Settings tab has none", () => {
+  const tables = fixtureTables();
+  tables.Settings = tables.Settings.filter(r => r.key !== "photo_folder_id");
+  const context = loadGs();
+  installFakes(context, tables, fakeDriveApp(null));
+  runLogging(context, "setUpPhotoFolder");
+  const made = [...context.DriveApp.folders.values()][0];
+  assert.equal(settingValue(context, "photo_folder_id"), made.getId());
+});
+
+test("setUpPhotoFolder run twice changes nothing the second time", () => {
+  const context = loadGs();
+  installFakes(context, tablesWithNoPhotoFolder(), fakeDriveApp(null));
+  runLogging(context, "setUpPhotoFolder");
+  const firstId = settingValue(context, "photo_folder_id");
+
+  const log = runLogging(context, "setUpPhotoFolder");
+  assert.equal(context.DriveApp.folders.size, 1, "no second folder");
+  assert.equal(settingValue(context, "photo_folder_id"), firstId);
+  assert.match(log, /nothing to do/i);
+});
+
+test("setUpPhotoFolder refuses to replace a folder id it cannot open, and says what to do", () => {
+  const context = loadGs();
+  // The live Sheet today: an id pasted in by hand, pointing at a folder drive.file cannot reach.
+  installFakes(context, tablesWithNoPhotoFolder("MADE_BY_HAND"), fakeDriveApp(null));
+  const log = runLogging(context, "setUpPhotoFolder");
+
+  assert.equal(context.DriveApp.folders.size, 0, "no second folder is made behind the admin's back");
+  assert.equal(settingValue(context, "photo_folder_id"), "MADE_BY_HAND", "and the cell is left for them to clear");
+  assert.match(log, /Settings tab/);
+  assert.match(log, /photo_folder_id/);
+  assert.match(log, /setUpPhotoFolder again/);
+});
+
+test("a photo uploaded before anyone ran setUpPhotoFolder makes the folder on the way through", () => {
+  const context = loadGs();
+  installFakes(context, tablesWithNoPhotoFolder(), fakeDriveApp(null));
+  const token = loginAsTop(context);
+  const r = post(context, { action: "uploadMedicinePhoto", token, medicineId: "MED01", slot: "box", dataUrl: JPEG });
+  assert.equal(r.ok, true, JSON.stringify(r));
+
+  const rootId = settingValue(context, "photo_folder_id");
+  assert.ok(rootId, "the new folder's id was written into Settings, so the next upload finds it");
+  const root = context.DriveApp.folders.get(rootId);
+  assert.equal(root.getName(), "CyberHealth Photos");
+  const file = [...context.DriveApp.files.values()][0];
+  const medFolder = context.DriveApp.folders.get(file.folderId);
+  assert.equal(medFolder.name, "MED01 Amlodipine 5 mg");
+  assert.equal(medFolder.parentId, rootId, "the medicine's folder sits inside the one the app just made");
+  assert.equal(gridRows(context, "Medicines").find(m => m.medicine_id === "MED01").photo_box, r.data.url);
+
+  // The second upload must reuse the folder rather than make another one.
+  assert.equal(post(context, { action: "uploadMedicinePhoto", token, medicineId: "MED02", slot: "box", dataUrl: JPEG }).ok, true);
+  assert.equal([...context.DriveApp.folders.values()].filter(f => f.parentId === null).length, 1);
+});
+
+test("a photo upload against a folder id the app cannot open is refused in plain words", () => {
+  const context = loadGs();
+  installFakes(context, tablesWithNoPhotoFolder("MADE_BY_HAND"), fakeDriveApp(null));
+  const token = loginAsTop(context);
+  const r = post(context, { action: "uploadMedicinePhoto", token, medicineId: "MED01", slot: "box", dataUrl: JPEG });
+
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.equal(r.error.code, "BAD_INPUT");
+  assert.match(r.error.message, /photo_folder_id/);
+  assert.match(r.error.message, /setUpPhotoFolder/);
+  assert.equal(context.DriveApp.folders.size, 0, "no second folder: nobody is left wondering where the photos went");
+  assert.equal(context.DriveApp.files.size, 0);
+  assert.equal(settingValue(context, "photo_folder_id"), "MADE_BY_HAND", "clearing the cell stays a deliberate act");
+  assert.equal(gridRows(context, "Medicines").find(m => m.medicine_id === "MED01").photo_box, "");
+});
+
+test("removing a photo whose link was pasted in by hand warns instead of trashing somebody's file", () => {
+  const context = loadGs();
+  installFakes(context);
+  const token = loginAsTop(context);
+  // MED01's photo_pill_front in the fixture is a Drive link the app never uploaded. Under
+  // drive.file it cannot touch that file at all -- which is the point: Sheet access alone must
+  // not let anyone paste an arbitrary Drive link into a photo cell and bin the file behind it.
+  const r = post(context, { action: "removeMedicinePhoto", token, medicineId: "MED01", slot: "pill_front" });
+
+  assert.equal(r.ok, true, `a file it may not touch is a warning, not a crash: ${JSON.stringify(r)}`);
+  assert.equal(r.data.warnings.length, 1, JSON.stringify(r.data.warnings));
+  assert.match(r.data.warnings[0], /still in Drive/);
+  assert.equal(gridRows(context, "Medicines").find(m => m.medicine_id === "MED01").photo_pill_front, "", "the app forgets it either way");
+  assert.equal([...context.DriveApp.files.values()].filter(f => f.trashed).length, 0);
 });
 
 // ---- the request cache must never answer a read taken inside the lock ----
